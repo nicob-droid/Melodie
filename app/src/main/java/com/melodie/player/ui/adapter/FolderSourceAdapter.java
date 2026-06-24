@@ -69,10 +69,13 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
         }
 
         void bind(FolderSource source, OnFolderSourceActionListener listener) {
+            boolean isLocalSource = source.id == 0L; // Synthetic "Telephone / Music" source
+
             title.setText(source.displayName);
             subtitle.setText(source.treeUri);
             enabledSwitch.setOnCheckedChangeListener(null);
             enabledSwitch.setChecked(source.enabled);
+            enabledSwitch.setEnabled(!isLocalSource);
             enabledSwitch.setText(source.enabled
                     ? itemView.getContext().getString(R.string.folders_source_enabled)
                     : itemView.getContext().getString(R.string.folders_source_disabled));
@@ -82,6 +85,8 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
                         : itemView.getContext().getString(R.string.folders_source_disabled));
                 listener.onEnabledChanged(source, isChecked);
             });
+            removeButton.setEnabled(!isLocalSource);
+            removeButton.setAlpha(isLocalSource ? 0.5f : 1f);
             removeButton.setOnClickListener(v -> listener.onRemoveClicked(source));
         }
     }

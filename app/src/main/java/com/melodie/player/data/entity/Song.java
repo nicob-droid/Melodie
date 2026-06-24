@@ -40,6 +40,9 @@ public class Song {
     @NonNull
     public String source;
 
+    /** ID of the FolderSource if source is LOCAL, 0 otherwise */
+    public long folderSourceId;
+
     @Nullable
     public String cover;
 
@@ -52,6 +55,7 @@ public class Song {
         this.title = "";
         this.path = "";
         this.source = SOURCE_LOCAL;
+        this.folderSourceId = 0L;
     }
 }
 

@@ -13,11 +13,22 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 
 /**
  * Scans MediaStore for local audio tracks.
  */
 public class MediaStoreScanner {
+
+    public static class SourceRoot {
+        public final long folderSourceId;
+        public final String absolutePathPrefix;
+
+        public SourceRoot(long folderSourceId, String absolutePathPrefix) {
+            this.folderSourceId = folderSourceId;
+            this.absolutePathPrefix = absolutePathPrefix;
+        }
+    }
 
     public static class ScanResult {
         public final List<Song> songs;
@@ -29,9 +40,10 @@ public class MediaStoreScanner {
         }
     }
 
-    public static ScanResult scan(Context context) {
+    public static ScanResult scan(Context context, List<SourceRoot> sourceRoots) {
         List<Song> songs = new ArrayList<>();
         Map<String, Album> albumMap = new HashMap<>();
+        List<SourceRoot> normalizedRoots = normalizeRoots(sourceRoots);
 
         Uri uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
         Uri albumArtBase = Uri.parse("content://media/external/audio/albumart");
@@ -51,7 +63,6 @@ public class MediaStoreScanner {
         };
 
         String selection = MediaStore.Audio.Media.IS_MUSIC + " != 0 AND "
-                + MediaStore.Audio.Media.DATA + " NOT LIKE '%WhatsApp%' AND "
                 + MediaStore.Audio.Media.DATA + " NOT LIKE '%Telegram%' AND "
                 + MediaStore.Audio.Media.DATA + " NOT LIKE '%Cache%'";
 
@@ -68,12 +79,24 @@ public class MediaStoreScanner {
             int trackIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK);
             int durationIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
             int dateIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
+            int dataIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA);
 
             while (c.moveToNext()) {
                 long id = c.getLong(idIdx);
                 long albumId = c.getLong(albumIdIdx);
                 Uri trackUri = ContentUris.withAppendedId(uri, id);
                 Uri coverUri = ContentUris.withAppendedId(albumArtBase, albumId);
+                String absolutePath = c.getString(dataIdx);
+
+                long matchedFolderSourceId = resolveFolderSourceId(absolutePath, normalizedRoots);
+                if (matchedFolderSourceId < 0L) {
+                    continue;
+                }
+                // Les audios WhatsApp ne sont acceptes que via une source explicite ajoutee par l'utilisateur.
+                // Cela evite qu'ils reapparaissent via la source locale par defaut (id=0).
+                if (isWhatsAppPath(absolutePath) && matchedFolderSourceId <= 0L) {
+                    continue;
+                }
 
                 String albumName = c.getString(albumIdx);
                 String artistName = c.getString(artistIdx);
@@ -95,6 +118,7 @@ public class MediaStoreScanner {
                 s.duration = c.getLong(durationIdx);
                 s.path = trackUri.toString();
                 s.source = Song.SOURCE_LOCAL;
+                s.folderSourceId = matchedFolderSourceId;
                 s.cover = coverUri.toString();
                 s.favorite = false;
                 s.dateAdded = c.getLong(dateIdx) * 1000L;
@@ -118,6 +142,49 @@ public class MediaStoreScanner {
         }
 
         return new ScanResult(songs, new ArrayList<>(albumMap.values()));
+    }
+
+    private static List<SourceRoot> normalizeRoots(List<SourceRoot> roots) {
+        List<SourceRoot> result = new ArrayList<>();
+        if (roots == null) return result;
+        for (SourceRoot root : roots) {
+            if (root == null || root.absolutePathPrefix == null) continue;
+            String normalized = normalizePath(root.absolutePathPrefix);
+            if (normalized.isEmpty()) continue;
+            result.add(new SourceRoot(root.folderSourceId, normalized));
+        }
+        return result;
+    }
+
+    private static long resolveFolderSourceId(String absolutePath, List<SourceRoot> roots) {
+        if (roots == null || roots.isEmpty()) return 0L;
+        String normalizedPath = normalizePath(absolutePath);
+        if (normalizedPath.isEmpty()) return -1L;
+
+        long bestMatchId = -1L;
+        int bestLength = -1;
+        for (SourceRoot root : roots) {
+            String prefix = root.absolutePathPrefix;
+            if (prefix.isEmpty()) continue;
+            if (normalizedPath.startsWith(prefix) && prefix.length() > bestLength) {
+                bestLength = prefix.length();
+                bestMatchId = root.folderSourceId;
+            }
+        }
+        return bestMatchId;
+    }
+
+    private static String normalizePath(String rawPath) {
+        if (rawPath == null) return "";
+        String path = rawPath.trim().replace('\\', '/').toLowerCase(Locale.ROOT);
+        while (path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
+    private static boolean isWhatsAppPath(String absolutePath) {
+        return normalizePath(absolutePath).contains("whatsapp");
     }
 
     private static String buildAlbumKey(String artist, String album) {

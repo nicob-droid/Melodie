@@ -23,6 +23,9 @@ public interface FolderSourceDao {
     @Query("SELECT * FROM folder_sources ORDER BY enabled DESC, displayName COLLATE NOCASE ASC")
     LiveData<List<FolderSource>> observeAll();
 
+    @Query("SELECT * FROM folder_sources ORDER BY enabled DESC, displayName COLLATE NOCASE ASC")
+    List<FolderSource> getAllSync();
+
     @Query("SELECT * FROM folder_sources WHERE treeUri = :treeUri LIMIT 1")
     FolderSource getByTreeUri(String treeUri);
 

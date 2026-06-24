@@ -27,13 +27,16 @@ public interface SongDao {
     @Query("DELETE FROM songs WHERE source = :source")
     void deleteBySource(String source);
 
+    @Query("DELETE FROM songs WHERE source = 'LOCAL' AND folderSourceId NOT IN (:activeFolderSourceIds)")
+    void deleteLocalSongsNotInFolderSources(List<Long> activeFolderSourceIds);
+
     // Colonnes completes d'une Song en utilisant TOUJOURS la pochette de l'album (table albums)
     // comme source de verite, afin d'etre parfaitement synchronise avec les onglets Albums/Artists.
     // Fallback sur songs.cover uniquement si la chanson n'a pas de ligne album correspondante.
     String SONG_WITH_ALBUM_COVER_COLUMNS =
             "songs.id AS id, songs.title AS title, songs.artist AS artist, songs.album AS album, "
             + "songs.albumId AS albumId, songs.trackNumber AS trackNumber, songs.duration AS duration, songs.path AS path, "
-            + "songs.source AS source, "
+            + "songs.source AS source, songs.folderSourceId AS folderSourceId, "
             + "COALESCE(albums.cover, songs.cover) AS cover, "
             + "songs.favorite AS favorite, songs.dateAdded AS dateAdded";
 

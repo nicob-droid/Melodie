@@ -13,7 +13,7 @@ import com.melodie.player.data.entity.Song;
 
 @Database(
         entities = {Song.class, Album.class, Playlist.class, PlaylistSong.class, DriveFolder.class, DriveAudio.class, FolderSource.class},
-        version = 5,
+        version = 6,
         exportSchema = false
 )
 public abstract class MelodieDatabase extends RoomDatabase {

@@ -135,7 +135,11 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         if (cover == null) return true;
         String trimmed = cover.trim();
         if (trimmed.isEmpty()) return true;
+        // Le sentinel indique qu'on a déjà cherché sans résultat : on n'essaie plus.
         if (NO_REMOTE_COVER.equals(trimmed)) return false;
+        // Une URL HTTP déjà connue : pas la peine de re-chercher même si Glide échoue.
+        if (trimmed.startsWith("http")) return false;
+        // Albumart embarqué (content://) : si Glide échoue, on tente une pochette distante.
         return trimmed.startsWith("content://");
     }
 
