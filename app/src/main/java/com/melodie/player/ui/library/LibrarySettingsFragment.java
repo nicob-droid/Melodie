@@ -1,4 +1,4 @@
-package com.melodie.player.ui.settings;
+package com.melodie.player.ui.library;
 
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -13,6 +13,7 @@ import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.google.android.material.switchmaterial.SwitchMaterial;
+
 import com.melodie.player.R;
 import com.melodie.player.data.repository.MusicRepository;
 
@@ -21,7 +22,7 @@ import javax.inject.Inject;
 import dagger.hilt.android.AndroidEntryPoint;
 
 @AndroidEntryPoint
-public class SettingsFragment extends Fragment {
+public class LibrarySettingsFragment extends Fragment {
 
     @Inject
     MusicRepository musicRepository;
@@ -30,19 +31,17 @@ public class SettingsFragment extends Fragment {
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_settings, container, false);
+        return inflater.inflate(R.layout.fragment_library_settings, container, false);
     }
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
-        TextView audio = view.findViewById(R.id.settings_audio);
-        TextView library = view.findViewById(R.id.settings_library);
-        TextView drive = view.findViewById(R.id.settings_drive);
+        TextView eq = view.findViewById(R.id.settings_eq);
+        TextView folders = view.findViewById(R.id.settings_folders);
         SwitchMaterial onlineCover = view.findViewById(R.id.settings_online_cover);
         TextView refreshCover = view.findViewById(R.id.settings_refresh_cover);
-        TextView cache = view.findViewById(R.id.settings_cache);
         TextView theme = view.findViewById(R.id.settings_theme);
-        TextView eq = view.findViewById(R.id.settings_eq);
+        TextView libraryScan = view.findViewById(R.id.library_scan);
 
         onlineCover.setChecked(musicRepository.isOnlineCoverEnabled());
         onlineCover.setOnCheckedChangeListener((buttonView, isChecked) ->
@@ -54,14 +53,13 @@ public class SettingsFragment extends Fragment {
                     R.string.settings_cover_refresh_done, Toast.LENGTH_SHORT).show());
         }));
 
-        library.setOnClickListener(v -> musicRepository.scanLocal(null));
-        drive.setOnClickListener(v ->
-                NavHostFragment.findNavController(SettingsFragment.this).navigate(R.id.driveFragment));
+        libraryScan.setOnClickListener(v -> musicRepository.scanLocal(null));
+        folders.setOnClickListener(v ->
+                NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.foldersFragment));
         eq.setOnClickListener(v ->
-                NavHostFragment.findNavController(SettingsFragment.this).navigate(R.id.equalizerFragment));
-        // Audio / Cache / Theme : placeholders
-        audio.setOnClickListener(v -> { });
-        cache.setOnClickListener(v -> { });
+                NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.equalizerFragment));
+
+        // Placeholder conservé pour la section non encore implémentée.
         theme.setOnClickListener(v -> { });
     }
 }

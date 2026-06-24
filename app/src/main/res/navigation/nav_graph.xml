@@ -37,10 +37,6 @@
         android:name="com.melodie.player.ui.search.SearchFragment"
         android:label="@string/nav_search" />
 
-    <fragment
-        android:id="@+id/settingsFragment"
-        android:name="com.melodie.player.ui.settings.SettingsFragment"
-        android:label="@string/nav_settings" />
 
     <fragment
         android:id="@+id/playerFragment"
@@ -56,6 +52,11 @@
         android:id="@+id/driveFragment"
         android:name="com.melodie.player.ui.drive.DriveFragment"
         android:label="@string/drive_title" />
+
+    <fragment
+        android:id="@+id/foldersFragment"
+        android:name="com.melodie.player.ui.library.FoldersFragment"
+        android:label="@string/settings_folders" />
 
 </navigation>
 

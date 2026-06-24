@@ -22,7 +22,7 @@ import javax.inject.Inject;
 import dagger.hilt.android.AndroidEntryPoint;
 
 @AndroidEntryPoint
-public class FavoritesFragment extends Fragment {
+public class PlaylistsFragment extends Fragment {
 
     @Inject
     PlayerController playerController;
@@ -40,14 +40,15 @@ public class FavoritesFragment extends Fragment {
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
-            NavHostFragment.findNavController(FavoritesFragment.this)
+            NavHostFragment.findNavController(PlaylistsFragment.this)
                     .navigate(R.id.playerFragment);
         });
         rv.setAdapter(adapter);
 
         LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
                 .get(LibraryViewModel.class);
-        vm.favorites().observe(getViewLifecycleOwner(), adapter::submitList);
+        vm.playlists().observe(getViewLifecycleOwner(), adapter::submitList);
     }
 }
+
 

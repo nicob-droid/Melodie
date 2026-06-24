@@ -14,6 +14,7 @@ import androidx.viewpager2.widget.ViewPager2;
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 import com.melodie.player.R;
+import com.melodie.player.ui.search.SearchFragment;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
@@ -23,9 +24,9 @@ public class LibraryFragment extends Fragment {
     private static final int[] TABS = {
             R.string.tab_albums,
             R.string.tab_artists,
-            R.string.tab_songs,
-            R.string.tab_folders,
-            R.string.tab_favorites
+            R.string.nav_search,
+            R.string.tab_favorites,
+            R.string.tab_settings
     };
 
     @Nullable
@@ -43,21 +44,19 @@ public class LibraryFragment extends Fragment {
 
         pager.setAdapter(new FragmentStateAdapter(this) {
             @Override
-            public int getItemCount() {
-                return TABS.length;
-            }
+            public int getItemCount() { return TABS.length; }
 
             @NonNull
             @Override
             public Fragment createFragment(int position) {
-                switch (position) {
-                    case 0: return new AlbumsFragment();
-                    case 1: return new ArtistsFragment();
-                    case 2: return new SongsFragment();
-                    case 3: return new FoldersFragment();
-                    case 4: return new FavoritesFragment();
-                    default: return new SongsFragment();
-                }
+                return switch (position) {
+                    case 0 -> new AlbumsFragment();
+                    case 1 -> new ArtistsFragment();
+                    case 2 -> new SearchFragment();
+                    case 3 -> new PlaylistsFragment();
+                    case 4 -> new LibrarySettingsFragment();
+                    default -> new AlbumsFragment();
+                };
             }
         });
 
@@ -65,4 +64,3 @@ public class LibraryFragment extends Fragment {
                 (tab, position) -> tab.setText(TABS[position])).attach();
     }
 }
-

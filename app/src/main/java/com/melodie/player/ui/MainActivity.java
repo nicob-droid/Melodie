@@ -8,16 +8,13 @@ import android.view.View;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.splashscreen.SplashScreen;
 import androidx.navigation.NavController;
 import androidx.navigation.fragment.NavHostFragment;
-import androidx.navigation.ui.NavigationUI;
 
-import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.melodie.player.R;
 import com.melodie.player.data.repository.MusicRepository;
 import com.melodie.player.playback.PlayerController;
@@ -50,14 +47,10 @@ public class MainActivity extends AppCompatActivity {
                 .findFragmentById(R.id.nav_host);
         NavController nav = host.getNavController();
 
-        BottomNavigationView bottomNav = findViewById(R.id.bottom_nav);
-        NavigationUI.setupWithNavController(bottomNav, nav);
-
-        // Hide bottom nav + mini player on player full screen
+        // Hide mini player on player full screen
         View miniPlayer = findViewById(R.id.mini_player_container);
         nav.addOnDestinationChangedListener((c, dest, args) -> {
             boolean onPlayer = dest.getId() == R.id.playerFragment;
-            bottomNav.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
             miniPlayer.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
         });
 

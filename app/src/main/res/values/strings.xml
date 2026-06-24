@@ -17,12 +17,14 @@
     <string name="tab_songs">Songs</string>
     <string name="tab_albums">Albums</string>
     <string name="tab_artists">Artists</string>
+    <string name="tab_settings">Settings</string>
     <string name="tab_folders">Folders</string>
-    <string name="tab_favorites">Favorites</string>
+    <string name="tab_favorites">Playlists</string>
     <string name="library_album_tracks_label">Album tracks</string>
     <string name="library_artist_tracks_label">Artist tracks</string>
     <string name="library_album_tracks_title">Album: %1$s</string>
     <string name="library_artist_tracks_title">Artist: %1$s</string>
+    <string name="library_scan">Library scan</string>
 
     <!-- Folders sources -->
     <string name="folders_title">Sources utilisées</string>
@@ -50,7 +52,7 @@
 
     <!-- Settings -->
     <string name="settings_audio">Audio</string>
-    <string name="settings_library">Library scan</string>
+    <string name="settings_folders">Folder sources</string>
     <string name="settings_drive">Google Drive</string>
     <string name="settings_online_cover">Pochettes en ligne (si absentes localement)</string>
     <string name="settings_refresh_cover">Rechercher les pochettes maintenant</string>

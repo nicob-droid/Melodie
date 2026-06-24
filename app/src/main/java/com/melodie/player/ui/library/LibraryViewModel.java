@@ -44,7 +44,7 @@ public class LibraryViewModel extends ViewModel {
         return repository.observeArtistsWithData();
     }
 
-    public LiveData<List<Song>> favorites() {
+    public LiveData<List<Song>> playlists() {
         return repository.observeFavorites();
     }
 
