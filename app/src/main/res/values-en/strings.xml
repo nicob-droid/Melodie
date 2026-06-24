@@ -1,0 +1,91 @@
+<resources>
+    <string name="app_name">Melodie</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home -->
+    <string name="home_continue">Continue listening</string>
+    <string name="home_recent_albums">Recent albums</string>
+    <string name="home_playlists">Playlists</string>
+    <string name="home_favorites">Favorites</string>
+
+    <!-- Library tabs -->
+    <string name="tab_songs">Songs</string>
+    <string name="tab_albums">Albums</string>
+    <string name="tab_artists">Artists</string>
+    <string name="tab_settings">Settings</string>
+    <string name="tab_folders">Folders</string>
+    <string name="tab_favorites">Playlists</string>
+    <string name="library_album_tracks_label">Album tracks</string>
+    <string name="library_artist_tracks_label">Artist tracks</string>
+    <string name="library_album_tracks_title">Album: %1$s</string>
+    <string name="library_artist_tracks_title">Artist: %1$s</string>
+    <string name="library_scan">Library scan</string>
+
+    <!-- Folder sources -->
+    <string name="folders_title">Used sources</string>
+    <string name="folders_empty">No source added</string>
+    <string name="folders_add_source">Add source</string>
+    <string name="folders_source_enabled">Enabled</string>
+    <string name="folders_source_disabled">Disabled</string>
+    <string name="folders_source_remove">Remove</string>
+    <string name="folders_remove_confirm_title">Remove source?</string>
+    <string name="folders_remove_confirm_message">Do you really want to remove "%1$s"?</string>
+    <string name="folders_remove_confirm_yes">Remove</string>
+
+    <!-- Player -->
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_next">Next</string>
+    <string name="player_previous">Previous</string>
+    <string name="player_shuffle">Shuffle</string>
+    <string name="player_repeat">Repeat</string>
+    <string name="player_favorite">Favorite</string>
+    <string name="player_back">Back</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search songs, albums, artists…</string>
+
+    <!-- Settings -->
+    <string name="settings_audio">Audio</string>
+    <string name="settings_folders">Folder sources</string>
+    <string name="settings_drive">Google Drive</string>
+    <string name="settings_online_cover">Online covers (if missing locally)</string>
+    <string name="settings_refresh_cover">Refresh covers now</string>
+    <string name="settings_cover_refresh_done">Cover refresh completed</string>
+    <string name="settings_cache">Cache</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_equalizer">Equalizer</string>
+
+    <!-- Drive -->
+    <string name="drive_title">Google Drive</string>
+    <string name="drive_sync">Sync</string>
+    <string name="drive_sign_in">Sign in with Google</string>
+
+    <!-- Equalizer -->
+    <string name="eq_preset">Preset</string>
+    <string name="eq_preset_custom">Custom</string>
+    <string name="eq_freq_60">60 Hz</string>
+    <string name="eq_freq_230">230 Hz</string>
+    <string name="eq_freq_910">910 Hz</string>
+    <string name="eq_freq_3600">3.6 kHz</string>
+    <string name="eq_freq_14000">14 kHz</string>
+    <string name="eq_bass_boost">Bass boost</string>
+    <string name="eq_virtualizer">Virtualizer</string>
+    <string name="eq_loudness">Loudness</string>
+    <string name="eq_unavailable">Start playback to enable equalizer controls.</string>
+
+    <!-- Misc -->
+    <string name="permission_required">Audio permission required to scan library</string>
+    <string name="grant_permission">Grant permission</string>
+    <string name="empty_library">Your library is empty</string>
+    <string name="unknown_artist">Unknown artist</string>
+    <string name="unknown_album">Unknown album</string>
+    <string name="release_date_unknown">Unknown</string>
+    <string name="artist_song_count">%1$d tracks</string>
+</resources>
+
