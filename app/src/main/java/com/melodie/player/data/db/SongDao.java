@@ -32,7 +32,7 @@ public interface SongDao {
     // Fallback sur songs.cover uniquement si la chanson n'a pas de ligne album correspondante.
     String SONG_WITH_ALBUM_COVER_COLUMNS =
             "songs.id AS id, songs.title AS title, songs.artist AS artist, songs.album AS album, "
-            + "songs.albumId AS albumId, songs.duration AS duration, songs.path AS path, "
+            + "songs.albumId AS albumId, songs.trackNumber AS trackNumber, songs.duration AS duration, songs.path AS path, "
             + "songs.source AS source, "
             + "COALESCE(albums.cover, songs.cover) AS cover, "
             + "songs.favorite AS favorite, songs.dateAdded AS dateAdded";
@@ -52,12 +52,17 @@ public interface SongDao {
 
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
-            + "WHERE songs.albumId = :albumId ORDER BY songs.title COLLATE NOCASE ASC")
+            + "WHERE songs.albumId = :albumId "
+            + "ORDER BY songs.trackNumber ASC, songs.title COLLATE NOCASE ASC")
     LiveData<List<Song>> observeByAlbum(long albumId);
 
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
-            + "WHERE songs.artist = :artist ORDER BY songs.title COLLATE NOCASE ASC")
+            + "WHERE songs.artist = :artist "
+            + "ORDER BY COALESCE(NULLIF(albums.releaseDate, ''), '9999') ASC, "
+            + "songs.albumId ASC, "
+            + "songs.trackNumber ASC, "
+            + "songs.title COLLATE NOCASE ASC")
     LiveData<List<Song>> observeByArtist(String artist);
 
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS

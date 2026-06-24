@@ -43,6 +43,7 @@ public class MediaStoreScanner {
                 MediaStore.Audio.Media.ALBUM,
                 MediaStore.Audio.Media.ALBUM_ID,
                 MediaStore.Audio.Media.YEAR,
+                MediaStore.Audio.Media.TRACK,
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.DATA,
                 MediaStore.Audio.Media.DATE_ADDED,
@@ -64,6 +65,7 @@ public class MediaStoreScanner {
             int albumIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM);
             int albumIdIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID);
             int yearIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR);
+            int trackIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK);
             int durationIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION);
             int dateIdx = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED);
 
@@ -86,6 +88,10 @@ public class MediaStoreScanner {
                 s.album = albumName;
                 // Utilise un id logique stable pour regrouper les variantes MediaStore d'un meme album.
                 s.albumId = logicalAlbumId;
+                // TRACK peut encoder disque+piste sous la forme 1XYZ (disque 1, piste XYZ).
+                // On conserve la valeur brute pour respecter l'ordre intra-disque.
+                int rawTrack = c.getInt(trackIdx);
+                s.trackNumber = rawTrack > 0 ? rawTrack : 0;
                 s.duration = c.getLong(durationIdx);
                 s.path = trackUri.toString();
                 s.source = Song.SOURCE_LOCAL;

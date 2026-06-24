@@ -26,6 +26,9 @@ public class Song {
 
     public long albumId;
 
+    /** track number within the album (0 = unknown) */
+    public int trackNumber;
+
     /** duration in ms */
     public long duration;
 
