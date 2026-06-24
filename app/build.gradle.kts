@@ -73,6 +73,7 @@ dependencies {
     implementation(libs.swiperefresh)
     implementation(libs.preference)
     implementation(libs.core.splashscreen)
+    implementation(libs.palette)
 
     // Lifecycle
     implementation(libs.lifecycle.viewmodel)

@@ -27,6 +27,7 @@ navigationFragmentKtx = "2.9.8"
 navigationUiKtx = "2.9.8"
 documentfile = "1.0.1"
 splashscreen = "1.0.1"
+palette = "1.0.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -77,6 +78,7 @@ navigation-fragment-ktx = { group = "androidx.navigation", name = "navigation-fr
 navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "navigationUiKtx" }
 documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
+palette = { group = "androidx.palette", name = "palette", version.ref = "palette" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

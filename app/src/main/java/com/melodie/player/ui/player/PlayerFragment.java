@@ -4,6 +4,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,9 +19,11 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 import androidx.media3.common.Player;
 import androidx.navigation.fragment.NavHostFragment;
+import androidx.palette.graphics.Palette;
 
 import com.bumptech.glide.Glide;
 import com.melodie.player.R;
@@ -40,12 +47,14 @@ public class PlayerFragment extends Fragment {
     private TextView total;
     private ImageButton btnPlay;
     private ImageView cover;
+    private View coverGlow;
     private TextView title;
     private TextView artist;
     private TextView album;
     private ImageButton btnFav;
     private ImageButton btnShuffle;
     private ImageButton btnRepeat;
+    private View playerRoot;
     private boolean shuffle = false;
     private int repeatMode = Player.REPEAT_MODE_OFF;
     private Song currentSong;
@@ -74,6 +83,8 @@ public class PlayerFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        playerRoot = view;
+        coverGlow = view.findViewById(R.id.cover_glow);
         cover = view.findViewById(R.id.cover);
         title = view.findViewById(R.id.title);
         artist = view.findViewById(R.id.artist);
@@ -128,14 +139,134 @@ public class PlayerFragment extends Fragment {
 
     private void bind(Song s) {
         currentSong = s;
-        if (s == null) return;
+        if (s == null) {
+            applyDefaultBackground();
+            return;
+        }
         title.setText(s.title);
         artist.setText(s.artist != null ? s.artist : getString(R.string.unknown_artist));
         album.setText(s.album != null ? s.album : getString(R.string.unknown_album));
         Glide.with(this)
                 .load(s.cover != null ? Uri.parse(s.cover) : null)
                 .placeholder(R.drawable.ic_album)
+                .error(R.drawable.ic_album)
+                .listener(new com.bumptech.glide.request.RequestListener<Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(@Nullable com.bumptech.glide.load.engine.GlideException e,
+                                                Object model,
+                                                com.bumptech.glide.request.target.Target<Drawable> target,
+                                                boolean isFirstResource) {
+                        applyDefaultBackground();
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onResourceReady(Drawable resource,
+                                                   Object model,
+                                                   com.bumptech.glide.request.target.Target<Drawable> target,
+                                                   com.bumptech.glide.load.DataSource dataSource,
+                                                   boolean isFirstResource) {
+                        applyArtworkGradient(resource);
+                        return false;
+                    }
+                })
                 .into(cover);
+    }
+
+    private void applyArtworkGradient(@Nullable Drawable drawable) {
+        Bitmap bitmap = toBitmap(drawable);
+        if (bitmap == null) {
+            applyDefaultBackground();
+            return;
+        }
+
+        // Build a richer gradient from multiple artwork swatches to better "extend" the cover.
+        Palette.from(bitmap).generate(palette -> {
+            if (!isAdded() || playerRoot == null) return;
+
+            final int fallback = ContextCompat.getColor(requireContext(), R.color.bg_dark);
+            int dominant = palette != null ? palette.getDominantColor(fallback) : fallback;
+            int vibrant = palette != null ? palette.getVibrantColor(dominant) : dominant;
+            int muted = palette != null ? palette.getMutedColor(dominant) : dominant;
+            int darkVibrant = palette != null ? palette.getDarkVibrantColor(muted) : muted;
+
+            int c1 = blendWithBlack(shiftSaturation(vibrant, 1.18f), 0.15f);
+            int c2 = blendWithBlack(blend(vibrant, muted, 0.40f), 0.35f);
+            int c3 = blendWithBlack(blend(muted, darkVibrant, 0.55f), 0.55f);
+            int c4 = blendWithBlack(darkVibrant, 0.78f);
+
+            GradientDrawable gradient = new GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    new int[]{c1, c2, c3, c4}
+            );
+
+            int glowCenter = withAlpha(shiftSaturation(vibrant, 1.12f), 130);
+            int glowEdge = withAlpha(darkVibrant, 0);
+            GradientDrawable radialGlow = new GradientDrawable();
+            radialGlow.setShape(GradientDrawable.OVAL);
+            radialGlow.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+            float radius = cover != null && cover.getWidth() > 0
+                    ? (cover.getWidth() * 0.9f)
+                    : 420f;
+            radialGlow.setGradientRadius(radius);
+            radialGlow.setColors(new int[]{glowCenter, glowEdge});
+
+            requireActivity().runOnUiThread(() -> {
+                playerRoot.setBackground(gradient);
+                if (coverGlow != null) {
+                    coverGlow.setBackground(radialGlow);
+                    coverGlow.setAlpha(0.95f);
+                }
+            });
+        });
+    }
+
+    private void applyDefaultBackground() {
+        if (!isAdded() || playerRoot == null) return;
+        playerRoot.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.bg_dark));
+        if (coverGlow != null) {
+            coverGlow.setBackground(null);
+        }
+    }
+
+    @Nullable
+    private Bitmap toBitmap(@Nullable Drawable drawable) {
+        if (drawable == null) return null;
+        int width = Math.max(1, drawable.getIntrinsicWidth());
+        int height = Math.max(1, drawable.getIntrinsicHeight());
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        drawable.setBounds(0, 0, canvas.getWidth(), canvas.getHeight());
+        drawable.draw(canvas);
+        return bitmap;
+    }
+
+    private int blendWithBlack(int color, float amount) {
+        amount = Math.max(0f, Math.min(1f, amount));
+        int r = (int) (Color.red(color) * (1f - amount));
+        int g = (int) (Color.green(color) * (1f - amount));
+        int b = (int) (Color.blue(color) * (1f - amount));
+        return Color.rgb(r, g, b);
+    }
+
+    private int blend(int a, int b, float t) {
+        t = Math.max(0f, Math.min(1f, t));
+        int r = (int) (Color.red(a) + (Color.red(b) - Color.red(a)) * t);
+        int g = (int) (Color.green(a) + (Color.green(b) - Color.green(a)) * t);
+        int bl = (int) (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t);
+        return Color.rgb(r, g, bl);
+    }
+
+    private int shiftSaturation(int color, float factor) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        hsv[1] = Math.max(0f, Math.min(1f, hsv[1] * factor));
+        return Color.HSVToColor(hsv);
+    }
+
+    private int withAlpha(int color, int alpha) {
+        alpha = Math.max(0, Math.min(255, alpha));
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
     }
 
     @Override
