@@ -1,0 +1,29 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.Melodie.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/bg_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_round</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/melodie_purple</item>
+        <item name="postSplashScreenTheme">@style/Theme.Melodie</item>
+    </style>
+
+    <style name="Theme.Melodie" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/melodie_purple</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/audio_cyan</item>
+        <item name="colorOnSecondary">@color/black</item>
+        <item name="colorTertiary">@color/energy_green</item>
+        <item name="colorOnTertiary">@color/black</item>
+
+        <item name="android:colorBackground">@color/bg_dark</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceVariant">@color/surface_variant</item>
+        <item name="colorOnBackground">@color/text_primary</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
+

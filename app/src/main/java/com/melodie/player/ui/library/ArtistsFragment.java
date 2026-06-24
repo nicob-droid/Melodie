@@ -1,0 +1,42 @@
+package com.melodie.player.ui.library;
+
+import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import androidx.lifecycle.ViewModelProvider;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.melodie.player.R;
+import com.melodie.player.ui.adapter.ArtistAdapter;
+
+import dagger.hilt.android.AndroidEntryPoint;
+
+@AndroidEntryPoint
+public class ArtistsFragment extends Fragment {
+
+    @Nullable
+    @Override
+    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
+                             @Nullable Bundle savedInstanceState) {
+        return inflater.inflate(R.layout.fragment_recycler, container, false);
+    }
+
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        RecyclerView rv = view.findViewById(R.id.recycler);
+        rv.setLayoutManager(new LinearLayoutManager(requireContext()));
+        ArtistAdapter adapter = new ArtistAdapter(artist -> { /* TODO open artist */ });
+        rv.setAdapter(adapter);
+
+        LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
+                .get(LibraryViewModel.class);
+        vm.artistsWithData().observe(getViewLifecycleOwner(), adapter::submitList);
+    }
+}
+

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/homeFragment">
+
+    <fragment
+        android:id="@+id/homeFragment"
+        android:name="com.melodie.player.ui.home.HomeFragment"
+        android:label="@string/nav_home" />
+
+    <fragment
+        android:id="@+id/libraryFragment"
+        android:name="com.melodie.player.ui.library.LibraryFragment"
+        android:label="@string/nav_library" />
+
+    <fragment
+        android:id="@+id/searchFragment"
+        android:name="com.melodie.player.ui.search.SearchFragment"
+        android:label="@string/nav_search" />
+
+    <fragment
+        android:id="@+id/settingsFragment"
+        android:name="com.melodie.player.ui.settings.SettingsFragment"
+        android:label="@string/nav_settings" />
+
+    <fragment
+        android:id="@+id/playerFragment"
+        android:name="com.melodie.player.ui.player.PlayerFragment"
+        android:label="Player" />
+
+    <fragment
+        android:id="@+id/equalizerFragment"
+        android:name="com.melodie.player.ui.equalizer.EqualizerFragment"
+        android:label="@string/settings_equalizer" />
+
+    <fragment
+        android:id="@+id/driveFragment"
+        android:name="com.melodie.player.ui.drive.DriveFragment"
+        android:label="@string/drive_title" />
+
+</navigation>
+

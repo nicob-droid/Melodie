@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand -->
+    <color name="melodie_purple">#7C4DFF</color>
+    <color name="audio_cyan">#00D4FF</color>
+    <color name="energy_green">#00E5A8</color>
+    <color name="ic_launcher_background">#0F0F14</color>
+
+    <!-- Background -->
+    <color name="bg_dark">#0F0F14</color>
+    <color name="surface">#1A1A22</color>
+    <color name="surface_dark">#232333</color>
+    <color name="surface_variant">#232333</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0C3</color>
+    <color name="text_disabled">#6C6C80</color>
+
+    <!-- States -->
+    <color name="state_playing">#00E5A8</color>
+    <color name="state_pause">#7C4DFF</color>
+    <color name="state_error">#FF4D6D</color>
+
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+

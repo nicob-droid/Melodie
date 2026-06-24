@@ -1,0 +1,78 @@
+<resources>
+    <string name="app_name">Melodie</string>
+
+    <!-- Bottom nav -->
+    <string name="nav_home">Home</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Home -->
+    <string name="home_continue">Continue listening</string>
+    <string name="home_recent_albums">Recent albums</string>
+    <string name="home_playlists">Playlists</string>
+    <string name="home_favorites">Favorites</string>
+
+    <!-- Library tabs -->
+    <string name="tab_songs">Songs</string>
+    <string name="tab_albums">Albums</string>
+    <string name="tab_artists">Artists</string>
+    <string name="tab_folders">Folders</string>
+    <string name="tab_favorites">Favorites</string>
+
+    <!-- Folders sources -->
+    <string name="folders_title">Sources utilisées</string>
+    <string name="folders_empty">Aucune source ajoutée</string>
+    <string name="folders_add_source">Ajouter une source</string>
+    <string name="folders_source_enabled">Activée</string>
+    <string name="folders_source_disabled">Désactivée</string>
+    <string name="folders_source_remove">Supprimer</string>
+    <string name="folders_remove_confirm_title">Supprimer la source ?</string>
+    <string name="folders_remove_confirm_message">Voulez-vous vraiment supprimer "%1$s" ?</string>
+    <string name="folders_remove_confirm_yes">Supprimer</string>
+
+    <!-- Player -->
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_next">Next</string>
+    <string name="player_previous">Previous</string>
+    <string name="player_shuffle">Shuffle</string>
+    <string name="player_repeat">Repeat</string>
+    <string name="player_favorite">Favorite</string>
+    <string name="player_back">Back</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search songs, albums, artists…</string>
+
+    <!-- Settings -->
+    <string name="settings_audio">Audio</string>
+    <string name="settings_library">Library scan</string>
+    <string name="settings_drive">Google Drive</string>
+    <string name="settings_online_cover">Pochettes en ligne (si absentes localement)</string>
+    <string name="settings_refresh_cover">Rechercher les pochettes maintenant</string>
+    <string name="settings_cover_refresh_done">Recherche de pochettes terminee</string>
+    <string name="settings_cache">Cache</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_equalizer">Equalizer</string>
+
+    <!-- Drive -->
+    <string name="drive_title">Google Drive</string>
+    <string name="drive_sync">Sync</string>
+    <string name="drive_sign_in">Sign in with Google</string>
+
+    <!-- Equalizer -->
+    <string name="eq_preset">Preset</string>
+    <string name="eq_bass_boost">Bass boost</string>
+    <string name="eq_virtualizer">Virtualizer</string>
+    <string name="eq_loudness">Loudness</string>
+
+    <!-- Misc -->
+    <string name="permission_required">Audio permission required to scan library</string>
+    <string name="grant_permission">Grant permission</string>
+    <string name="empty_library">Your library is empty</string>
+    <string name="unknown_artist">Unknown artist</string>
+    <string name="unknown_album">Unknown album</string>
+    <string name="release_date_unknown">—</string>
+    <string name="artist_song_count">%1$d morceaux</string>
+</resources>
+
