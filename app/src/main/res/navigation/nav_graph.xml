@@ -15,6 +15,29 @@
         android:label="@string/nav_library" />
 
     <fragment
+        android:id="@+id/albumSongsFragment"
+        android:name="com.melodie.player.ui.library.AlbumSongsFragment"
+        android:label="@string/library_album_tracks_label">
+        <argument
+            android:name="album_id"
+            app:argType="long" />
+        <argument
+            android:name="album_name"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/artistSongsFragment"
+        android:name="com.melodie.player.ui.library.ArtistSongsFragment"
+        android:label="@string/library_artist_tracks_label">
+        <argument
+            android:name="artist_name"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+
+    <fragment
         android:id="@+id/searchFragment"
         android:name="com.melodie.player.ui.search.SearchFragment"
         android:label="@string/nav_search" />

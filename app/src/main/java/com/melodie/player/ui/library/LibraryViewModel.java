@@ -48,6 +48,14 @@ public class LibraryViewModel extends ViewModel {
         return repository.observeFavorites();
     }
 
+    public LiveData<List<Song>> songsByAlbum(long albumId) {
+        return repository.observeSongsByAlbum(albumId);
+    }
+
+    public LiveData<List<Song>> songsByArtist(String artist) {
+        return repository.observeSongsByArtist(artist);
+    }
+
     public void refreshLocal() {
         repository.scanLocal(null);
     }

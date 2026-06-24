@@ -9,6 +9,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.fragment.NavHostFragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -31,7 +32,12 @@ public class ArtistsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
-        ArtistAdapter adapter = new ArtistAdapter(artist -> { /* TODO open artist */ });
+        ArtistAdapter adapter = new ArtistAdapter(artist -> {
+            Bundle args = new Bundle();
+            args.putString(ArtistSongsFragment.ARG_ARTIST_NAME, artist.name);
+            NavHostFragment.findNavController(ArtistsFragment.this)
+                    .navigate(R.id.artistSongsFragment, args);
+        });
         rv.setAdapter(adapter);
 
         LibraryViewModel vm = new ViewModelProvider(requireParentFragment())

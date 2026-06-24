@@ -71,6 +71,14 @@ public class MusicRepository {
         return songDao.observeFavorites();
     }
 
+    public LiveData<List<Song>> observeSongsByAlbum(long albumId) {
+        return songDao.observeByAlbum(albumId);
+    }
+
+    public LiveData<List<Song>> observeSongsByArtist(String artist) {
+        return songDao.observeByArtist(artist);
+    }
+
     public LiveData<List<String>> observeArtists() {
         return songDao.observeArtists();
     }
