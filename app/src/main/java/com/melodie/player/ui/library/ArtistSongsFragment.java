@@ -39,6 +39,9 @@ public class ArtistSongsFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        view.findViewById(R.id.btn_back).setOnClickListener(v ->
+                NavHostFragment.findNavController(ArtistSongsFragment.this).navigateUp());
+
         String artistName = requireArguments().getString(ARG_ARTIST_NAME, "");
         if (artistName == null || artistName.trim().isEmpty()) {
             artistName = getString(R.string.unknown_artist);

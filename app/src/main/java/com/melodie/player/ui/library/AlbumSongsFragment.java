@@ -40,6 +40,9 @@ public class AlbumSongsFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        view.findViewById(R.id.btn_back).setOnClickListener(v ->
+                NavHostFragment.findNavController(AlbumSongsFragment.this).navigateUp());
+
         long albumId = requireArguments().getLong(ARG_ALBUM_ID, -1L);
         String albumName = requireArguments().getString(ARG_ALBUM_NAME, "");
         if (albumName == null || albumName.trim().isEmpty()) {
