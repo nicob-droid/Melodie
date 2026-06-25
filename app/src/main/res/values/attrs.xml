@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="VerticalSeekBar">
+        <attr name="android:max" />
+        <attr name="vsbTrackFillColor" format="color" />
+        <attr name="vsbThumbColor" format="color" />
+    </declare-styleable>
+</resources>
+

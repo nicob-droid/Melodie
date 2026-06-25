@@ -30,6 +30,8 @@ public class VerticalSeekBar extends View {
 
     private int max = 100;
     private int progress = 0;
+    private int trackFillColor;
+    private int thumbColor;
 
     private final Paint trackBgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint trackFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -64,13 +66,17 @@ public class VerticalSeekBar extends View {
     }
 
     private void initAttrs(@Nullable AttributeSet attrs) {
-        if (attrs != null) {
-            // Parse android:max from XML
-            TypedArray a = getContext().obtainStyledAttributes(attrs, new int[]{android.R.attr.max});
-            max = a.getInt(0, 100);
-            if (max < 1) max = 100;
-            a.recycle();
-        }
+        trackFillColor = ContextCompat.getColor(getContext(), R.color.melodie_purple);
+        thumbColor = trackFillColor;
+
+        if (attrs == null) return;
+
+        TypedArray a = getContext().obtainStyledAttributes(attrs, R.styleable.VerticalSeekBar);
+        max = a.getInt(R.styleable.VerticalSeekBar_android_max, 100);
+        if (max < 1) max = 100;
+        trackFillColor = a.getColor(R.styleable.VerticalSeekBar_vsbTrackFillColor, trackFillColor);
+        thumbColor = a.getColor(R.styleable.VerticalSeekBar_vsbThumbColor, thumbColor);
+        a.recycle();
     }
 
     private void init() {
@@ -89,10 +95,10 @@ public class VerticalSeekBar extends View {
         trackBgPaint.setColor(Color.parseColor("#2A2A3A"));
         trackBgPaint.setStyle(Paint.Style.FILL);
 
-        trackFillPaint.setColor(ContextCompat.getColor(getContext(), R.color.melodie_purple));
+        trackFillPaint.setColor(trackFillColor);
         trackFillPaint.setStyle(Paint.Style.FILL);
 
-        thumbPaint.setColor(ContextCompat.getColor(getContext(), R.color.melodie_purple));
+        thumbPaint.setColor(thumbColor);
         thumbPaint.setStyle(Paint.Style.FILL);
 
         thumbBorderPaint.setColor(Color.WHITE);

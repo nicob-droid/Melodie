@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.core.widget.NestedScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg_dark"
@@ -220,8 +221,20 @@
                             android:text="0.0" />
                     </LinearLayout>
 
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <View
+                        android:layout_width="1dp"
+                        android:layout_height="180dp"
+                        android:layout_marginEnd="10dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@color/surface_variant" />
+
                     <LinearLayout
-                        android:layout_width="52dp"
+                        android:layout_width="56dp"
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
@@ -234,7 +247,9 @@
                             android:id="@+id/band_master"
                             android:layout_width="40dp"
                             android:layout_height="180dp"
-                            android:max="2000" />
+                            android:max="2000"
+                            app:vsbThumbColor="@color/audio_cyan"
+                            app:vsbTrackFillColor="@color/audio_cyan" />
 
                         <TextView
                             android:id="@+id/band_master_level"
