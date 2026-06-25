@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -36,17 +37,24 @@ public class SongsFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
+                .get(LibraryViewModel.class);
+
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
             NavHostFragment.findNavController(SongsFragment.this)
                     .navigate(R.id.playerFragment);
-        });
+        }, (anchor, song, position) -> PlaylistDialogs.showAddToPlaylistDialog(
+                SongsFragment.this,
+                vm,
+                song.id,
+                () -> requireActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(), R.string.playlist_track_added, Toast.LENGTH_SHORT).show())
+        ));
         rv.setAdapter(adapter);
 
-        LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
-                .get(LibraryViewModel.class);
         SongAdapter finalAdapter = adapter;
         vm.songs().observe(getViewLifecycleOwner(), finalAdapter::submitList);
     }

@@ -54,8 +54,16 @@
         android:textColor="@color/text_secondary"
         android:textSize="12sp"
         android:paddingStart="12dp"
-        android:paddingEnd="4dp"
+        android:paddingEnd="8dp"
         tools:text="3:45"
         xmlns:tools="http://schemas.android.com/tools" />
+
+    <ImageButton
+        android:id="@+id/btn_more"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/song_more_actions"
+        android:src="@android:drawable/ic_menu_more" />
 </LinearLayout>
 

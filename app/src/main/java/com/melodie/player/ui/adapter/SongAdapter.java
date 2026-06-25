@@ -27,11 +27,21 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         void onClick(Song song, int position);
     }
 
+    public interface OnSongMenuClick {
+        void onMenuClick(View anchor, Song song, int position);
+    }
+
     private final OnSongClick listener;
+    private final OnSongMenuClick menuListener;
 
     public SongAdapter(OnSongClick listener) {
+        this(listener, null);
+    }
+
+    public SongAdapter(OnSongClick listener, OnSongMenuClick menuListener) {
         super(DIFF);
         this.listener = listener;
+        this.menuListener = menuListener;
     }
 
     private static final DiffUtil.ItemCallback<Song> DIFF = new DiffUtil.ItemCallback<Song>() {
@@ -74,6 +84,10 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         h.itemView.setOnClickListener(v -> {
             if (listener != null) listener.onClick(s, position);
         });
+        h.more.setVisibility(menuListener != null ? View.VISIBLE : View.GONE);
+        h.more.setOnClickListener(v -> {
+            if (menuListener != null) menuListener.onMenuClick(h.more, s, position);
+        });
     }
 
     private Object toGlideSource(String cover) {
@@ -91,6 +105,7 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         final TextView title;
         final TextView subtitle;
         final TextView duration;
+        final View more;
 
         VH(@NonNull View itemView) {
             super(itemView);
@@ -98,6 +113,7 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
             title = itemView.findViewById(R.id.title);
             subtitle = itemView.findViewById(R.id.subtitle);
             duration = itemView.findViewById(R.id.duration);
+            more = itemView.findViewById(R.id.btn_more);
         }
     }
 }

@@ -7,6 +7,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -19,6 +20,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.melodie.player.R;
 import com.melodie.player.playback.PlayerController;
 import com.melodie.player.ui.adapter.SongAdapter;
+import com.melodie.player.ui.library.LibraryViewModel;
+import com.melodie.player.ui.library.PlaylistDialogs;
 
 import javax.inject.Inject;
 
@@ -39,12 +42,21 @@ public class SearchFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        LibraryViewModel libraryVm = new ViewModelProvider(requireParentFragment())
+                .get(LibraryViewModel.class);
+
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
             NavHostFragment.findNavController(SearchFragment.this).navigate(R.id.playerFragment);
-        });
+        }, (anchor, song, position) -> PlaylistDialogs.showAddToPlaylistDialog(
+                SearchFragment.this,
+                libraryVm,
+                song.id,
+                () -> requireActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(), R.string.playlist_track_added, Toast.LENGTH_SHORT).show())
+        ));
         rv.setAdapter(adapter);
 
         SearchViewModel vm = new ViewModelProvider(this).get(SearchViewModel.class);

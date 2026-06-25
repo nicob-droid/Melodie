@@ -87,5 +87,30 @@
     <string name="unknown_album">Album inconnu</string>
     <string name="release_date_unknown">Inconnue</string>
     <string name="artist_song_count">%1$d morceaux</string>
+    <string name="song_more_actions">Actions du morceau</string>
+
+    <!-- Playlists -->
+    <string name="playlists_empty_title">Aucune playlist</string>
+    <string name="playlists_empty_subtitle">Crée ta première playlist pour organiser tes titres.</string>
+    <string name="playlist_create">Créer une playlist</string>
+    <string name="playlist_create_confirm">Créer</string>
+    <string name="playlist_name_hint">Nom de la playlist</string>
+    <string name="playlist_name_required">Le nom de la playlist est requis</string>
+    <string name="playlist_add_to">Ajouter à une playlist</string>
+    <string name="playlist_create_new_short">+ Nouvelle playlist</string>
+    <string name="playlist_track_added">Morceau ajouté à la playlist</string>
+    <string name="playlist_play">Lire</string>
+    <string name="playlist_shuffle">Lecture aléatoire</string>
+    <string name="playlist_empty_tracks">Cette playlist est vide. Ajoute des morceaux depuis le menu d un titre.</string>
+    <string name="playlist_remove_track">Retirer de la playlist</string>
+    <string name="playlist_rename">Renommer</string>
+    <string name="playlist_delete">Supprimer</string>
+    <string name="playlist_delete_confirm_title">Supprimer la playlist ?</string>
+    <string name="playlist_delete_confirm_message">Voulez-vous vraiment supprimer "%1$s" ?</string>
+
+    <plurals name="playlist_song_count">
+        <item quantity="one">%1$d morceau</item>
+        <item quantity="other">%1$d morceaux</item>
+    </plurals>
 </resources>
 

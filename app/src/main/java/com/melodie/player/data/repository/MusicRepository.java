@@ -12,17 +12,21 @@ import androidx.lifecycle.Transformations;
 import com.melodie.player.data.cover.CoverArtFetcher;
 import com.melodie.player.data.db.AlbumDao;
 import com.melodie.player.data.db.FolderSourceDao;
+import com.melodie.player.data.db.PlaylistDao;
 import com.melodie.player.data.db.SongDao;
 import com.melodie.player.data.entity.Album;
 import com.melodie.player.data.entity.FolderSource;
+import com.melodie.player.data.entity.Playlist;
 import com.melodie.player.data.entity.Song;
 import com.melodie.player.data.model.ArtistData;
+import com.melodie.player.data.model.PlaylistSummary;
 import com.melodie.player.data.scan.MediaStoreScanner;
 
 import java.util.List;
 import java.util.ArrayList;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
+import java.util.function.LongConsumer;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -39,6 +43,7 @@ public class MusicRepository {
     private final Context context;
     private final SongDao songDao;
     private final AlbumDao albumDao;
+    private final PlaylistDao playlistDao;
     private final FolderSourceDao folderSourceDao;
     private final CoverArtFetcher coverArtFetcher;
     private final ExecutorService executor;
@@ -48,12 +53,14 @@ public class MusicRepository {
     public MusicRepository(@ApplicationContext Context context,
                            SongDao songDao,
                            AlbumDao albumDao,
+                           PlaylistDao playlistDao,
                            FolderSourceDao folderSourceDao,
                            CoverArtFetcher coverArtFetcher,
                            ExecutorService executor) {
         this.context = context;
         this.songDao = songDao;
         this.albumDao = albumDao;
+        this.playlistDao = playlistDao;
         this.folderSourceDao = folderSourceDao;
         this.coverArtFetcher = coverArtFetcher;
         this.executor = executor;
@@ -74,6 +81,18 @@ public class MusicRepository {
 
     public LiveData<List<Song>> observeFavorites() {
         return songDao.observeFavorites();
+    }
+
+    public LiveData<List<PlaylistSummary>> observePlaylists() {
+        return playlistDao.observeAllSummaries();
+    }
+
+    public LiveData<Playlist> observePlaylist(long playlistId) {
+        return playlistDao.observePlaylist(playlistId);
+    }
+
+    public LiveData<List<Song>> observePlaylistSongs(long playlistId) {
+        return playlistDao.observeSongs(playlistId);
     }
 
     public LiveData<List<Song>> observeSongsByAlbum(long albumId) {
@@ -110,6 +129,44 @@ public class MusicRepository {
 
     public void toggleFavorite(Song song) {
         executor.execute(() -> songDao.setFavorite(song.id, !song.favorite));
+    }
+
+    public void createPlaylist(String name, LongConsumer onDone) {
+        executor.execute(() -> {
+            Playlist playlist = new Playlist();
+            playlist.name = name;
+            playlist.createdAt = System.currentTimeMillis();
+            long id = playlistDao.createPlaylist(playlist);
+            if (onDone != null) onDone.accept(id);
+        });
+    }
+
+    public void addSongToPlaylist(long playlistId, String songId, Runnable onDone) {
+        if (playlistId <= 0 || songId == null || songId.trim().isEmpty()) return;
+        executor.execute(() -> {
+            playlistDao.addSongAtEnd(playlistId, songId);
+            if (onDone != null) onDone.run();
+        });
+    }
+
+    public void removeSongFromPlaylist(long playlistId, String songId) {
+        if (playlistId <= 0 || songId == null || songId.trim().isEmpty()) return;
+        executor.execute(() -> playlistDao.removeSong(playlistId, songId));
+    }
+
+    public void renamePlaylist(long playlistId, String name) {
+        if (playlistId <= 0 || name == null || name.trim().isEmpty()) return;
+        executor.execute(() -> playlistDao.rename(playlistId, name.trim()));
+    }
+
+    public void deletePlaylist(long playlistId) {
+        if (playlistId <= 0) return;
+        executor.execute(() -> playlistDao.deletePlaylistWithSongs(playlistId));
+    }
+
+    public void reorderPlaylist(long playlistId, List<String> orderedSongIds) {
+        if (playlistId <= 0 || orderedSongIds == null || orderedSongIds.isEmpty()) return;
+        executor.execute(() -> playlistDao.replaceOrder(playlistId, orderedSongIds));
     }
 
     public void addFolderSource(String displayName, String treeUri) {

@@ -87,5 +87,30 @@
     <string name="unknown_album">Unknown album</string>
     <string name="release_date_unknown">Unknown</string>
     <string name="artist_song_count">%1$d tracks</string>
+    <string name="song_more_actions">Track actions</string>
+
+    <!-- Playlists -->
+    <string name="playlists_empty_title">No playlists</string>
+    <string name="playlists_empty_subtitle">Create your first playlist to organize your tracks.</string>
+    <string name="playlist_create">Create playlist</string>
+    <string name="playlist_create_confirm">Create</string>
+    <string name="playlist_name_hint">Playlist name</string>
+    <string name="playlist_name_required">Playlist name is required</string>
+    <string name="playlist_add_to">Add to playlist</string>
+    <string name="playlist_create_new_short">+ New playlist</string>
+    <string name="playlist_track_added">Track added to playlist</string>
+    <string name="playlist_play">Play</string>
+    <string name="playlist_shuffle">Shuffle play</string>
+    <string name="playlist_empty_tracks">This playlist is empty. Add tracks from a track menu.</string>
+    <string name="playlist_remove_track">Remove from playlist</string>
+    <string name="playlist_rename">Rename</string>
+    <string name="playlist_delete">Delete</string>
+    <string name="playlist_delete_confirm_title">Delete playlist?</string>
+    <string name="playlist_delete_confirm_message">Do you really want to delete "%1$s"?</string>
+
+    <plurals name="playlist_song_count">
+        <item quantity="one">%1$d track</item>
+        <item quantity="other">%1$d tracks</item>
+    </plurals>
 </resources>
 

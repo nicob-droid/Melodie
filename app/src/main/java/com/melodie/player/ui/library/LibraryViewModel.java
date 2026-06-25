@@ -4,14 +4,17 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.ViewModel;
 
 import com.melodie.player.data.entity.Album;
+import com.melodie.player.data.entity.Playlist;
 import com.melodie.player.data.entity.Song;
 import com.melodie.player.data.model.ArtistData;
+import com.melodie.player.data.model.PlaylistSummary;
 import com.melodie.player.data.repository.MusicRepository;
 
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.LongConsumer;
 
 import javax.inject.Inject;
 
@@ -44,8 +47,40 @@ public class LibraryViewModel extends ViewModel {
         return repository.observeArtistsWithData();
     }
 
-    public LiveData<List<Song>> playlists() {
-        return repository.observeFavorites();
+    public LiveData<List<PlaylistSummary>> playlists() {
+        return repository.observePlaylists();
+    }
+
+    public LiveData<Playlist> playlist(long playlistId) {
+        return repository.observePlaylist(playlistId);
+    }
+
+    public LiveData<List<Song>> playlistSongs(long playlistId) {
+        return repository.observePlaylistSongs(playlistId);
+    }
+
+    public void createPlaylist(String name, LongConsumer onDone) {
+        repository.createPlaylist(name, onDone);
+    }
+
+    public void addSongToPlaylist(long playlistId, String songId, Runnable onDone) {
+        repository.addSongToPlaylist(playlistId, songId, onDone);
+    }
+
+    public void removeSongFromPlaylist(long playlistId, String songId) {
+        repository.removeSongFromPlaylist(playlistId, songId);
+    }
+
+    public void renamePlaylist(long playlistId, String name) {
+        repository.renamePlaylist(playlistId, name);
+    }
+
+    public void deletePlaylist(long playlistId) {
+        repository.deletePlaylist(playlistId);
+    }
+
+    public void reorderPlaylist(long playlistId, List<String> orderedSongIds) {
+        repository.reorderPlaylist(playlistId, orderedSongIds);
     }
 
     public LiveData<List<Song>> songsByAlbum(long albumId) {

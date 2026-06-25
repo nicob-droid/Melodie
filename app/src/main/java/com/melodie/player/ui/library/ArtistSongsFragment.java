@@ -5,6 +5,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -52,15 +53,21 @@ public class ArtistSongsFragment extends Fragment {
 
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
+        LibraryViewModel vm = new ViewModelProvider(this).get(LibraryViewModel.class);
 
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
             NavHostFragment.findNavController(ArtistSongsFragment.this)
                     .navigate(R.id.playerFragment);
-        });
+        }, (anchor, song, position) -> PlaylistDialogs.showAddToPlaylistDialog(
+                ArtistSongsFragment.this,
+                vm,
+                song.id,
+                () -> requireActivity().runOnUiThread(() ->
+                        Toast.makeText(requireContext(), R.string.playlist_track_added, Toast.LENGTH_SHORT).show())
+        ));
         rv.setAdapter(adapter);
 
-        LibraryViewModel vm = new ViewModelProvider(this).get(LibraryViewModel.class);
         vm.songsByArtist(artistName).observe(getViewLifecycleOwner(), adapter::submitList);
     }
 }

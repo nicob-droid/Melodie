@@ -58,5 +58,14 @@
         android:name="com.melodie.player.ui.library.FoldersFragment"
         android:label="@string/settings_folders" />
 
+    <fragment
+        android:id="@+id/playlistDetailFragment"
+        android:name="com.melodie.player.ui.library.PlaylistDetailFragment"
+        android:label="@string/home_playlists">
+        <argument
+            android:name="playlist_id"
+            app:argType="long" />
+    </fragment>
+
 </navigation>
 

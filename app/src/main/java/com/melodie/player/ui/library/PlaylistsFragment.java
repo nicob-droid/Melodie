@@ -14,40 +14,56 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.melodie.player.R;
-import com.melodie.player.playback.PlayerController;
-import com.melodie.player.ui.adapter.SongAdapter;
-
-import javax.inject.Inject;
+import com.melodie.player.ui.adapter.PlaylistAdapter;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
 @AndroidEntryPoint
 public class PlaylistsFragment extends Fragment {
 
-    @Inject
-    PlayerController playerController;
-
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_recycler, container, false);
+        return inflater.inflate(R.layout.fragment_playlists, container, false);
     }
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        View emptyState = view.findViewById(R.id.empty_state);
+        View createButton = view.findViewById(R.id.btn_create_playlist);
+        View createFab = view.findViewById(R.id.fab_create_playlist);
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
-        SongAdapter adapter = new SongAdapter((song, position) -> {
-            playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
+        PlaylistAdapter adapter = new PlaylistAdapter(playlist -> {
+            Bundle args = new Bundle();
+            args.putLong(PlaylistDetailFragment.ARG_PLAYLIST_ID, playlist.id);
             NavHostFragment.findNavController(PlaylistsFragment.this)
-                    .navigate(R.id.playerFragment);
+                    .navigate(R.id.playlistDetailFragment, args);
         });
         rv.setAdapter(adapter);
 
         LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
                 .get(LibraryViewModel.class);
-        vm.playlists().observe(getViewLifecycleOwner(), adapter::submitList);
+        View.OnClickListener onCreate = v -> PlaylistDialogs.showCreatePlaylistDialog(
+                PlaylistsFragment.this,
+                vm,
+                id -> requireActivity().runOnUiThread(() -> {
+                    Bundle args = new Bundle();
+                    args.putLong(PlaylistDetailFragment.ARG_PLAYLIST_ID, id);
+                    NavHostFragment.findNavController(PlaylistsFragment.this)
+                            .navigate(R.id.playlistDetailFragment, args);
+                })
+        );
+        createButton.setOnClickListener(onCreate);
+        createFab.setOnClickListener(onCreate);
+
+        vm.playlists().observe(getViewLifecycleOwner(), playlists -> {
+            adapter.submitList(playlists);
+            boolean isEmpty = playlists == null || playlists.isEmpty();
+            emptyState.setVisibility(isEmpty ? View.VISIBLE : View.GONE);
+            createFab.setVisibility(isEmpty ? View.GONE : View.VISIBLE);
+        });
     }
 }
 
