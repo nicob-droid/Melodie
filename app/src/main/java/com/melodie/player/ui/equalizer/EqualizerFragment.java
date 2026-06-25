@@ -44,13 +44,13 @@ public class EqualizerFragment extends Fragment {
 
     private Spinner presetSpinner;
     private TextView unavailable;
-    private final SeekBar[] bandBars = new SeekBar[BAND_VIEW_IDS.length];
+    private final VerticalSeekBar[] bandBars = new VerticalSeekBar[BAND_VIEW_IDS.length];
     private SwitchMaterial bassSwitch;
     private SeekBar bassStrength;
     private SwitchMaterial virtualizerSwitch;
     private SeekBar virtualizerStrength;
     private SwitchMaterial loudnessSwitch;
-    private SeekBar masterOut;
+    private VerticalSeekBar masterOut;
 
     private boolean presetSelectionGuard;
 
@@ -98,19 +98,10 @@ public class EqualizerFragment extends Fragment {
     private void setupListeners() {
         for (int i = 0; i < bandBars.length; i++) {
             final short band = (short) i;
-            bandBars[i].setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override
-                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    if (!fromUser) return;
-                    short min = playerController.getBandLevelMin();
-                    playerController.setBandLevel(band, (short) (min + progress));
-                }
-
-                @Override
-                public void onStartTrackingTouch(SeekBar seekBar) { }
-
-                @Override
-                public void onStopTrackingTouch(SeekBar seekBar) { }
+            bandBars[i].setOnProgressChangeListener((seekBar, progress, fromUser) -> {
+                if (!fromUser) return;
+                short min = playerController.getBandLevelMin();
+                playerController.setBandLevel(band, (short) (min + progress));
             });
         }
 
@@ -125,8 +116,9 @@ public class EqualizerFragment extends Fragment {
                 value -> playerController.setBassBoostStrength((short) value)));
         virtualizerStrength.setOnSeekBarChangeListener(simpleProgressListener(
                 value -> playerController.setVirtualizerStrength((short) value)));
-        masterOut.setOnSeekBarChangeListener(simpleProgressListener(
-                playerController::setLoudnessGainMb));
+        masterOut.setOnProgressChangeListener((seekBar, progress, fromUser) -> {
+            if (fromUser) playerController.setLoudnessGainMb(progress);
+        });
 
         presetSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
@@ -202,7 +194,7 @@ public class EqualizerFragment extends Fragment {
         short bandCount = playerController.getEqualizerBandCount();
 
         for (short band = 0; band < bandBars.length; band++) {
-            SeekBar bar = bandBars[band];
+            VerticalSeekBar bar = bandBars[band];
             boolean exists = band < bandCount;
             bar.setEnabled(exists);
             if (!exists) {
@@ -217,7 +209,7 @@ public class EqualizerFragment extends Fragment {
 
     private void setControlsEnabled(boolean enabled) {
         presetSpinner.setEnabled(enabled);
-        for (SeekBar bar : bandBars) bar.setEnabled(enabled);
+        for (VerticalSeekBar bar : bandBars) bar.setEnabled(enabled);
         bassSwitch.setEnabled(enabled);
         bassStrength.setEnabled(enabled);
         virtualizerSwitch.setEnabled(enabled);
@@ -230,4 +222,3 @@ public class EqualizerFragment extends Fragment {
         void accept(int value);
     }
 }
-
