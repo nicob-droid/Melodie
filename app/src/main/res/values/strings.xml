@@ -54,7 +54,7 @@
     <string name="settings_audio">Audio</string>
     <string name="settings_folders">Sources de dossiers</string>
     <string name="settings_drive">Google Drive</string>
-    <string name="settings_online_cover">Pochettes en ligne (si absentes localement)</string>
+    <string name="settings_online_cover">Pochettes en ligne</string>
     <string name="settings_refresh_cover">Rechercher les pochettes maintenant</string>
     <string name="settings_cover_refresh_done">Recherche de pochettes terminée</string>
     <string name="settings_cache">Cache</string>

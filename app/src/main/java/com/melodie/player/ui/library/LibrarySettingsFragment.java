@@ -39,28 +39,16 @@ public class LibrarySettingsFragment extends Fragment {
         TextView eq = view.findViewById(R.id.settings_eq);
         TextView folders = view.findViewById(R.id.settings_folders);
         SwitchMaterial onlineCover = view.findViewById(R.id.settings_online_cover);
-        TextView refreshCover = view.findViewById(R.id.settings_refresh_cover);
-        TextView theme = view.findViewById(R.id.settings_theme);
-        TextView libraryScan = view.findViewById(R.id.library_scan);
 
         onlineCover.setChecked(musicRepository.isOnlineCoverEnabled());
         onlineCover.setOnCheckedChangeListener((buttonView, isChecked) ->
                 musicRepository.setOnlineCoverEnabled(isChecked));
 
-        refreshCover.setOnClickListener(v -> musicRepository.resolveMissingCoversNow(() -> {
-            if (!isAdded()) return;
-            requireActivity().runOnUiThread(() -> Toast.makeText(requireContext(),
-                    R.string.settings_cover_refresh_done, Toast.LENGTH_SHORT).show());
-        }));
 
-        libraryScan.setOnClickListener(v -> musicRepository.scanLocal(null));
         folders.setOnClickListener(v ->
                 NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.foldersFragment));
         eq.setOnClickListener(v ->
                 NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.equalizerFragment));
-
-        // Placeholder conservé pour la section non encore implémentée.
-        theme.setOnClickListener(v -> { });
     }
 }
 

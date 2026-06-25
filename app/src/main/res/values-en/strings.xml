@@ -54,7 +54,7 @@
     <string name="settings_audio">Audio</string>
     <string name="settings_folders">Folder sources</string>
     <string name="settings_drive">Google Drive</string>
-    <string name="settings_online_cover">Online covers (if missing locally)</string>
+    <string name="settings_online_cover">Online covers</string>
     <string name="settings_refresh_cover">Refresh covers now</string>
     <string name="settings_cover_refresh_done">Cover refresh completed</string>
     <string name="settings_cache">Cache</string>
