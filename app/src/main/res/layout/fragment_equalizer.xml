@@ -46,9 +46,10 @@
             android:orientation="horizontal">
 
             <LinearLayout
-                android:layout_width="48dp"
+                android:layout_width="40dp"
                 android:layout_height="180dp"
                 android:gravity="center_vertical"
+                android:layout_gravity="center"
                 android:orientation="vertical">
 
                 <TextView
@@ -120,14 +121,19 @@
                         android:gravity="center"
                         android:orientation="vertical">
 
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="@string/eq_freq_60" />
+
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_0"
                             android:layout_width="40dp"
                             android:layout_height="180dp" />
 
                         <TextView
+                            android:id="@+id/band_0_level"
                             style="@style/EqBandLabel"
-                            android:text="@string/eq_freq_60" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -135,6 +141,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
+
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="@string/eq_freq_230" />
 
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_1"
@@ -142,8 +152,9 @@
                             android:layout_height="180dp" />
 
                         <TextView
+                            android:id="@+id/band_1_level"
                             style="@style/EqBandLabel"
-                            android:text="@string/eq_freq_230" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -151,6 +162,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
+
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="@string/eq_freq_910" />
 
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_2"
@@ -158,8 +173,9 @@
                             android:layout_height="180dp" />
 
                         <TextView
+                            android:id="@+id/band_2_level"
                             style="@style/EqBandLabel"
-                            android:text="@string/eq_freq_910" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -167,6 +183,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
+
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="@string/eq_freq_3600" />
 
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_3"
@@ -174,8 +194,9 @@
                             android:layout_height="180dp" />
 
                         <TextView
+                            android:id="@+id/band_3_level"
                             style="@style/EqBandLabel"
-                            android:text="@string/eq_freq_3600" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -183,6 +204,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
+
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="@string/eq_freq_14000" />
 
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_4"
@@ -190,8 +215,9 @@
                             android:layout_height="180dp" />
 
                         <TextView
+                            android:id="@+id/band_4_level"
                             style="@style/EqBandLabel"
-                            android:text="@string/eq_freq_14000" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -199,6 +225,10 @@
                         android:layout_height="wrap_content"
                         android:gravity="center"
                         android:orientation="vertical">
+
+                        <TextView
+                            style="@style/EqBandLabel"
+                            android:text="OUT" />
 
                         <com.melodie.player.ui.equalizer.VerticalSeekBar
                             android:id="@+id/band_master"
@@ -207,8 +237,9 @@
                             android:max="2000" />
 
                         <TextView
+                            android:id="@+id/band_master_level"
                             style="@style/EqBandLabel"
-                            android:text="OUT" />
+                            android:text="0.0" />
                     </LinearLayout>
 
                 </LinearLayout>

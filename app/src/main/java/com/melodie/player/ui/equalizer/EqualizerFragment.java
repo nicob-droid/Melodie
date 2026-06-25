@@ -21,6 +21,7 @@ import com.melodie.player.playback.PlayerController;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import javax.inject.Inject;
 
@@ -37,6 +38,14 @@ public class EqualizerFragment extends Fragment {
             R.id.band_4
     };
 
+    private static final int[] BAND_LEVEL_IDS = {
+            R.id.band_0_level,
+            R.id.band_1_level,
+            R.id.band_2_level,
+            R.id.band_3_level,
+            R.id.band_4_level
+    };
+
     @Inject
     PlayerController playerController;
 
@@ -45,12 +54,14 @@ public class EqualizerFragment extends Fragment {
     private Spinner presetSpinner;
     private TextView unavailable;
     private final VerticalSeekBar[] bandBars = new VerticalSeekBar[BAND_VIEW_IDS.length];
+    private final TextView[] bandLevelLabels = new TextView[BAND_LEVEL_IDS.length];
     private SwitchMaterial bassSwitch;
     private SeekBar bassStrength;
     private SwitchMaterial virtualizerSwitch;
     private SeekBar virtualizerStrength;
     private SwitchMaterial loudnessSwitch;
     private VerticalSeekBar masterOut;
+    private TextView masterOutLevel;
 
     private boolean presetSelectionGuard;
 
@@ -73,9 +84,11 @@ public class EqualizerFragment extends Fragment {
         virtualizerStrength = view.findViewById(R.id.seek_virtualizer);
         loudnessSwitch = view.findViewById(R.id.switch_loudness);
         masterOut = view.findViewById(R.id.band_master);
+        masterOutLevel = view.findViewById(R.id.band_master_level);
 
         for (int i = 0; i < BAND_VIEW_IDS.length; i++) {
             bandBars[i] = view.findViewById(BAND_VIEW_IDS[i]);
+            bandLevelLabels[i] = view.findViewById(BAND_LEVEL_IDS[i]);
         }
 
         playerController.init();
@@ -98,12 +111,20 @@ public class EqualizerFragment extends Fragment {
     private void setupListeners() {
         for (int i = 0; i < bandBars.length; i++) {
             final short band = (short) i;
+            final TextView levelLabel = bandLevelLabels[i];
             bandBars[i].setOnProgressChangeListener((seekBar, progress, fromUser) -> {
-                if (!fromUser) return;
-                short min = playerController.getBandLevelMin();
-                playerController.setBandLevel(band, (short) (min + progress));
+                if (fromUser) {
+                    short min = playerController.getBandLevelMin();
+                    playerController.setBandLevel(band, (short) (min + progress));
+                }
+                updateBandLevelLabel(levelLabel, seekBar, playerController.getBandLevelMin());
             });
         }
+
+        masterOut.setOnProgressChangeListener((seekBar, progress, fromUser) -> {
+            if (fromUser) playerController.setLoudnessGainMb(progress);
+            masterOutLevel.setText(String.format(Locale.US, "%.1f", progress / 100f));
+        });
 
         bassSwitch.setOnCheckedChangeListener((buttonView, isChecked) ->
                 playerController.setBassBoostEnabled(isChecked));
@@ -116,9 +137,6 @@ public class EqualizerFragment extends Fragment {
                 value -> playerController.setBassBoostStrength((short) value)));
         virtualizerStrength.setOnSeekBarChangeListener(simpleProgressListener(
                 value -> playerController.setVirtualizerStrength((short) value)));
-        masterOut.setOnProgressChangeListener((seekBar, progress, fromUser) -> {
-            if (fromUser) playerController.setLoudnessGainMb(progress);
-        });
 
         presetSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
@@ -131,6 +149,12 @@ public class EqualizerFragment extends Fragment {
             @Override
             public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
+    }
+
+    private void updateBandLevelLabel(TextView label, VerticalSeekBar bar, short min) {
+        // Convert progress back to dB: level in millibels → dB
+        float db = (min + bar.getProgress()) / 100f;
+        label.setText(String.format(Locale.US, "%+.1f", db));
     }
 
     private SeekBar.OnSeekBarChangeListener simpleProgressListener(IntConsumer onChange) {
@@ -167,6 +191,7 @@ public class EqualizerFragment extends Fragment {
         virtualizerStrength.setProgress(playerController.getVirtualizerStrength());
         loudnessSwitch.setChecked(playerController.isLoudnessEnabled());
         masterOut.setProgress(playerController.getLoudnessGainMb());
+        masterOutLevel.setText(String.format(Locale.US, "%.1f", playerController.getLoudnessGainMb() / 100f));
     }
 
     private void bindPresets() {
@@ -199,11 +224,13 @@ public class EqualizerFragment extends Fragment {
             bar.setEnabled(exists);
             if (!exists) {
                 bar.setProgress(0);
+                bandLevelLabels[band].setText("0.0");
                 continue;
             }
             bar.setMax(seekMax);
             int level = playerController.getBandLevel(band) - min;
             bar.setProgress(Math.max(0, Math.min(seekMax, level)));
+            updateBandLevelLabel(bandLevelLabels[band], bar, min);
         }
     }
 
