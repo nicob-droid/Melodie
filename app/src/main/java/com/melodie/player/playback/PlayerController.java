@@ -21,11 +21,13 @@ import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.melodie.player.data.db.SongDao;
 import com.melodie.player.data.entity.Song;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -55,6 +57,8 @@ public class PlayerController {
 
     private final Context context;
     private final SharedPreferences eqPrefs;
+    private final SongDao songDao;
+    private final ExecutorService executor;
     @Nullable
     private MediaController controller;
 
@@ -72,8 +76,12 @@ public class PlayerController {
     private int effectsSessionId = C.AUDIO_SESSION_ID_UNSET;
 
     @Inject
-    public PlayerController(@ApplicationContext Context context) {
+    public PlayerController(@ApplicationContext Context context,
+                            SongDao songDao,
+                            ExecutorService executor) {
         this.context = context;
+        this.songDao = songDao;
+        this.executor = executor;
         this.eqPrefs = context.getSharedPreferences(PREFS_EQ, Context.MODE_PRIVATE);
     }
 
@@ -100,7 +108,9 @@ public class PlayerController {
                     @Override
                     public void onPlaybackStateChanged(int state) {
                         if (controller != null) {
-                            duration.postValue(Math.max(0, controller.getDuration()));
+                            long currentDuration = Math.max(0, controller.getDuration());
+                            duration.postValue(currentDuration);
+                            persistCurrentDurationIfKnown(currentDuration);
                         }
                     }
                 });
@@ -400,6 +410,21 @@ public class PlayerController {
                 .setUri(s.path)
                 .setMediaMetadata(md)
                 .build();
+    }
+
+    private void persistCurrentDurationIfKnown(long durationMs) {
+        if (durationMs <= 0 || controller == null) return;
+
+        int idx = controller.getCurrentMediaItemIndex();
+        if (idx < 0 || idx >= queue.size()) return;
+
+        Song current = queue.get(idx);
+        if (current == null || current.id == null || current.id.trim().isEmpty()) return;
+        if (current.duration > 0) return;
+
+        current.duration = durationMs;
+        Song snapshot = current;
+        executor.execute(() -> songDao.updateDuration(snapshot.id, durationMs));
     }
 
     public void release() {

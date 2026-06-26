@@ -289,6 +289,17 @@ public class DriveRepository {
                 // Les dossiers cochés dans l'écran Drive deviennent de vraies sources persistées.
                 persistDriveFolderSources(selectedFolders);
 
+                Map<String, Long> knownDurationsBySongId = new HashMap<>();
+                List<Song> previousDriveSongs = songDao.getBySourceSync(Song.SOURCE_DRIVE);
+                if (previousDriveSongs != null) {
+                    for (Song existing : previousDriveSongs) {
+                        if (existing == null || existing.id == null || existing.id.trim().isEmpty()) continue;
+                        if (existing.duration > 0L) {
+                            knownDurationsBySongId.put(existing.id, existing.duration);
+                        }
+                    }
+                }
+
                 // On reconstruit les morceaux Drive à partir de l'état courant pour éviter les doublons
                 // et supprimer les entrées des dossiers qui ne sont plus sélectionnés.
                 driveAudioDao.clear();
@@ -307,6 +318,10 @@ public class DriveRepository {
                         for (DriveAudio audio : audioFiles) {
                             Song song = buildDriveSong(folder, source, audio);
                             if (song != null) {
+                                Long knownDuration = knownDurationsBySongId.get(song.id);
+                                if (knownDuration != null && knownDuration > 0L && song.duration <= 0L) {
+                                    song.duration = knownDuration;
+                                }
                                 driveSongs.add(song);
                             }
                         }
@@ -398,7 +413,7 @@ public class DriveRepository {
         song.artist = metadata.artist != null && !metadata.artist.trim().isEmpty() ? metadata.artist.trim() : sourceName;
         song.album = metadata.album != null && !metadata.album.trim().isEmpty() ? metadata.album.trim() : sourceName;
         song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
-        song.trackNumber = 0;
+        song.trackNumber = metadata.trackNumber > 0 ? metadata.trackNumber : 0;
         song.duration = 0L;
         // Streaming direct: la resolution vers Drive API (alt=media) est faite dans PlaybackService.
         song.path = "drive://file/" + audio.fileId;
@@ -417,6 +432,7 @@ public class DriveRepository {
 
         String artist = null;
         String title = normalizedBase;
+        int trackNumber = 0;
 
         int dashIndex = normalizedBase.indexOf(" - ");
         if (dashIndex > 0 && dashIndex < normalizedBase.length() - 3) {
@@ -426,8 +442,13 @@ public class DriveRepository {
                 artist = left;
                 title = right;
             } else if (isTrackNumberToken(left)) {
+                trackNumber = parseTrackNumber(left);
                 title = right;
             }
+        }
+
+        if (trackNumber <= 0) {
+            trackNumber = extractLeadingTrackNumber(normalizedBase);
         }
 
         title = stripLeadingTrackNumber(title);
@@ -448,6 +469,7 @@ public class DriveRepository {
         metadata.artist = artist;
         metadata.title = title;
         metadata.album = album;
+        metadata.trackNumber = trackNumber;
         return metadata;
     }
 
@@ -508,6 +530,40 @@ public class DriveRepository {
             }
         }
         return true;
+    }
+
+    private int parseTrackNumber(String token) {
+        try {
+            return Integer.parseInt(token.trim());
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private int extractLeadingTrackNumber(String value) {
+        if (value == null) return 0;
+        String v = value.trim();
+        if (v.isEmpty()) return 0;
+
+        int i = 0;
+        while (i < v.length() && Character.isDigit(v.charAt(i)) && i < 3) {
+            i++;
+        }
+        if (i == 0) return 0;
+
+        // Accepte 01, 01-, 01., 01_, 01) ou 01 espace
+        if (i < v.length()) {
+            char sep = v.charAt(i);
+            if (!(sep == ' ' || sep == '-' || sep == '_' || sep == '.' || sep == ')')) {
+                return 0;
+            }
+        }
+
+        try {
+            return Integer.parseInt(v.substring(0, i));
+        } catch (Exception ignored) {
+            return 0;
+        }
     }
 
     private boolean isLikelyArtist(String value) {
@@ -656,6 +712,7 @@ public class DriveRepository {
         String artist;
         String title;
         String album;
+        int trackNumber;
     }
 
     private static class AlbumContext {

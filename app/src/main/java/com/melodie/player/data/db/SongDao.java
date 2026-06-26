@@ -53,6 +53,9 @@ public interface SongDao {
     @Query("SELECT * FROM songs ORDER BY title COLLATE NOCASE ASC")
     List<Song> getAll();
 
+    @Query("SELECT * FROM songs WHERE source = :source")
+    List<Song> getBySourceSync(String source);
+
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
             + "WHERE songs.favorite = 1 AND " + VISIBLE_SONGS_FILTER + " "
@@ -87,6 +90,9 @@ public interface SongDao {
 
     @Query("UPDATE songs SET favorite = :fav WHERE id = :id")
     void setFavorite(String id, boolean fav);
+
+    @Query("UPDATE songs SET duration = :durationMs WHERE id = :id")
+    void updateDuration(String id, long durationMs);
 
     @Query("SELECT DISTINCT artist FROM songs WHERE artist IS NOT NULL AND " + VISIBLE_SONGS_FILTER + " ORDER BY artist COLLATE NOCASE ASC")
     LiveData<List<String>> observeArtists();
