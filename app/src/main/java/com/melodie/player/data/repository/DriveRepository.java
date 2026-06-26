@@ -860,9 +860,6 @@ public class DriveRepository {
         executor.execute(() -> {
             for (DriveFolder f : folders) {
                 driveFolderDao.update(f);
-                if (f != null && f.selected) {
-                    upsertDriveFolderSource(f);
-                }
             }
         });
     }

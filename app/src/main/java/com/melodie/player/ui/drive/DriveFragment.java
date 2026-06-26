@@ -18,6 +18,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.fragment.NavHostFragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -86,6 +87,7 @@ public class DriveFragment extends Fragment {
         syncButton.setOnClickListener(v -> {
             viewModel.syncSelectedFolders();
             Toast.makeText(requireContext(), R.string.drive_sync_and_add_sources_started, Toast.LENGTH_SHORT).show();
+            NavHostFragment.findNavController(this).navigateUp();
         });
 
         // Observers
