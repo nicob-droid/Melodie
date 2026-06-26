@@ -12,6 +12,8 @@ import com.melodie.player.data.db.DriveAudioDao;
 import com.melodie.player.data.db.DriveFolderDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.SongDao;
+import com.melodie.player.data.cover.CoverArtFetcher.DiscogsTrackInfo;
+import com.melodie.player.data.cover.CoverArtFetcher;
 import com.melodie.player.data.entity.DriveAudio;
 import com.melodie.player.data.entity.DriveFolder;
 import com.melodie.player.data.entity.FolderSource;
@@ -62,6 +64,7 @@ public class DriveRepository {
     private final FolderSourceDao folderSourceDao;
     private final SongDao songDao;
     private final MusicRepository musicRepository;
+    private final CoverArtFetcher coverArtFetcher;
     private final ExecutorService executor;
     private final SharedPreferences drivePrefs;
     private final MutableLiveData<String> authStatus = new MutableLiveData<>("LOGGED_OUT");
@@ -78,6 +81,7 @@ public class DriveRepository {
                           FolderSourceDao folderSourceDao,
                           SongDao songDao,
                           MusicRepository musicRepository,
+                          CoverArtFetcher coverArtFetcher,
                           ExecutorService executor) {
         this.context = context;
         this.driveFolderDao = driveFolderDao;
@@ -85,6 +89,7 @@ public class DriveRepository {
         this.folderSourceDao = folderSourceDao;
         this.songDao = songDao;
         this.musicRepository = musicRepository;
+        this.coverArtFetcher = coverArtFetcher;
         this.executor = executor;
         this.drivePrefs = context.getSharedPreferences(PREFS_DRIVE_AUTH, Context.MODE_PRIVATE);
         initializeGoogleSignIn();
@@ -285,6 +290,10 @@ public class DriveRepository {
                 if (selectedFolders == null) {
                     selectedFolders = new ArrayList<>();
                 }
+                if (selectedFolders.isEmpty()) {
+                    Log.w(TAG, "No selected Drive folders, skipping sync to avoid wiping existing Drive library");
+                    return;
+                }
 
                 // Les dossiers cochés dans l'écran Drive deviennent de vraies sources persistées.
                 persistDriveFolderSources(selectedFolders);
@@ -300,11 +309,6 @@ public class DriveRepository {
                     }
                 }
 
-                // On reconstruit les morceaux Drive à partir de l'état courant pour éviter les doublons
-                // et supprimer les entrées des dossiers qui ne sont plus sélectionnés.
-                driveAudioDao.clear();
-                songDao.deleteBySource(Song.SOURCE_DRIVE);
-
                 List<Song> driveSongs = new ArrayList<>();
 
                 for (DriveFolder folder : selectedFolders) {
@@ -315,18 +319,27 @@ public class DriveRepository {
                     }
                     List<DriveAudio> audioFiles = syncAudioFilesFromFolder(folder.driveId);
                     if (source != null && audioFiles != null && !audioFiles.isEmpty()) {
+                        List<DiscogsTrackInfo> discogsTracks = fetchDiscogsDurationsForFolder(folder, source);
+                        int folderSongIndex = 0;
                         for (DriveAudio audio : audioFiles) {
                             Song song = buildDriveSong(folder, source, audio);
                             if (song != null) {
+                                applyDiscogsDurationIfMissing(song, audio, discogsTracks, folderSongIndex);
                                 Long knownDuration = knownDurationsBySongId.get(song.id);
                                 if (knownDuration != null && knownDuration > 0L && song.duration <= 0L) {
                                     song.duration = knownDuration;
                                 }
                                 driveSongs.add(song);
+                                folderSongIndex++;
                             }
                         }
                     }
                 }
+
+                // On remplace la bibliothèque Drive uniquement après une synchronisation réussie.
+                // Cela évite de tout effacer si une requête réseau échoue en cours de route.
+                driveAudioDao.clear();
+                songDao.deleteBySource(Song.SOURCE_DRIVE);
 
                 if (!driveSongs.isEmpty()) {
                     songDao.insertAll(driveSongs);
@@ -360,13 +373,29 @@ public class DriveRepository {
                 "(mimeType='audio/mpeg' or mimeType='audio/wav' or mimeType='audio/ogg' or " +
                 "mimeType='audio/flac' or mimeType='audio/m4a') and trashed=false";
 
-        Drive.Files.List request = driveService.files().list()
-                .setQ(query)
-                .setSpaces("drive")
-                .setFields("files(id, name, size, modifiedTime, webContentLink, mimeType)")
-                .setPageSize(100);
-
-        FileList result = request.execute();
+        FileList result;
+        try {
+            Drive.Files.List request = driveService.files().list()
+                    .setQ(query)
+                    .setSpaces("drive")
+                    .setFields("files(id,name,size,modifiedTime,webContentLink,mimeType,musicMetadata(durationMillis,trackNumber))")
+                    .setPageSize(100);
+            result = request.execute();
+        } catch (GoogleJsonResponseException e) {
+            // Certains environnements/versions API peuvent rejeter musicMetadata.
+            // Fallback robuste: on relance sans ce champ au lieu d'échouer toute la synchro.
+            if (e.getStatusCode() == 400) {
+                Log.w(TAG, "musicMetadata unsupported, retrying Drive list without metadata fields");
+                Drive.Files.List fallbackRequest = driveService.files().list()
+                        .setQ(query)
+                        .setSpaces("drive")
+                        .setFields("files(id,name,size,modifiedTime,webContentLink,mimeType)")
+                        .setPageSize(100);
+                result = fallbackRequest.execute();
+            } else {
+                throw e;
+            }
+        }
         List<File> files = result.getFiles();
 
         driveAudioDao.deleteByFolder(folderId);
@@ -379,6 +408,19 @@ public class DriveRepository {
                 audio.folderId = folderId;
                 audio.fileSize = file.getSize() != null ? file.getSize() : 0;
                 audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0;
+                audio.durationMs = 0L;
+                audio.trackNumber = 0;
+                Object musicMetaRaw = file.get("musicMetadata");
+                if (!(musicMetaRaw instanceof Map)) {
+                    // Compatibilite defensive avec d'anciens payloads/tests.
+                    musicMetaRaw = file.get("audioMediaMetadata");
+                }
+                if (musicMetaRaw instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> musicMeta = (Map<String, Object>) musicMetaRaw;
+                    audio.durationMs = parseLongValue(musicMeta.get("durationMillis"));
+                    audio.trackNumber = (int) parseLongValue(musicMeta.get("trackNumber"));
+                }
                 audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
                 audio.downloaded = false;
                 audio.localPath = "";
@@ -413,8 +455,8 @@ public class DriveRepository {
         song.artist = metadata.artist != null && !metadata.artist.trim().isEmpty() ? metadata.artist.trim() : sourceName;
         song.album = metadata.album != null && !metadata.album.trim().isEmpty() ? metadata.album.trim() : sourceName;
         song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
-        song.trackNumber = metadata.trackNumber > 0 ? metadata.trackNumber : 0;
-        song.duration = 0L;
+        song.trackNumber = audio.trackNumber > 0 ? audio.trackNumber : (metadata.trackNumber > 0 ? metadata.trackNumber : 0);
+        song.duration = audio.durationMs > 0L ? audio.durationMs : 0L;
         // Streaming direct: la resolution vers Drive API (alt=media) est faite dans PlaybackService.
         song.path = "drive://file/" + audio.fileId;
         song.source = Song.SOURCE_DRIVE;
@@ -610,6 +652,84 @@ public class DriveRepository {
     private String normalize(String value) {
         if (value == null) return "";
         return value.trim().toLowerCase();
+    }
+
+    private long parseLongValue(Object raw) {
+        if (raw == null) return 0L;
+        if (raw instanceof Number) {
+            return ((Number) raw).longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(raw).trim());
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private List<DiscogsTrackInfo> fetchDiscogsDurationsForFolder(DriveFolder folder, FolderSource source) {
+        if (coverArtFetcher == null) return null;
+
+        String folderName = folder != null ? folder.name : null;
+        String sourceName = source != null ? source.displayName : null;
+        AlbumContext folderContext = parseAlbumContext(folderName);
+        AlbumContext sourceContext = parseAlbumContext(sourceName);
+
+        String artist = firstNonEmpty(folderContext.artist, sourceContext.artist);
+        String album = firstNonEmpty(folderContext.album, sourceContext.album);
+        if ((artist == null || artist.isEmpty()) && (album == null || album.isEmpty())) {
+            return null;
+        }
+
+        return coverArtFetcher.fetchDiscogsTrackInfos(artist != null ? artist : "", album != null ? album : "");
+    }
+
+    private void applyDiscogsDurationIfMissing(Song song, DriveAudio audio, List<DiscogsTrackInfo> discogsTracks, int sequentialIndex) {
+        if (song == null || audio == null || discogsTracks == null || discogsTracks.isEmpty()) return;
+        if (song.duration > 0L) return;
+
+        long duration = 0L;
+        if (audio.trackNumber > 0) {
+            int index = audio.trackNumber - 1;
+            if (index >= 0 && index < discogsTracks.size()) {
+                DiscogsTrackInfo info = discogsTracks.get(index);
+                duration = info != null ? info.durationMs : 0L;
+            }
+        }
+
+        if (duration <= 0L) {
+            String songTitle = normalizeTrackText(song.title);
+            for (DiscogsTrackInfo info : discogsTracks) {
+                if (info == null || info.durationMs <= 0L) continue;
+                String discogsTitle = normalizeTrackText(info.title);
+                if (!songTitle.isEmpty() && !discogsTitle.isEmpty() && titlesLookEquivalent(songTitle, discogsTitle)) {
+                    duration = info.durationMs;
+                    break;
+                }
+            }
+        }
+
+        if (duration <= 0L && sequentialIndex >= 0 && sequentialIndex < discogsTracks.size()) {
+            DiscogsTrackInfo info = discogsTracks.get(sequentialIndex);
+            duration = info != null ? info.durationMs : 0L;
+        }
+
+        if (duration > 0L) {
+            song.duration = duration;
+        }
+    }
+
+    private String normalizeTrackText(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().toLowerCase();
+        normalized = normalized.replaceAll("\\[[^\\]]*\\]", " ");
+        normalized = normalized.replaceAll("\\([^\\)]*\\)", " ");
+        normalized = normalized.replaceAll("[^a-z0-9]+", " ");
+        return normalized.replaceAll("\\s+", " ").trim();
+    }
+
+    private boolean titlesLookEquivalent(String a, String b) {
+        if (a.isEmpty() || b.isEmpty()) return false;
+        return a.equals(b) || a.contains(b) || b.contains(a);
     }
 
     private boolean canReuseCachedFile(DriveAudio previous, DriveAudio current) {
@@ -844,6 +964,7 @@ public class DriveRepository {
         }
         Log.e(TAG, context, e);
     }
+
 
     private void restorePersistedSession() {
         String token = drivePrefs.getString(KEY_DRIVE_ACCESS_TOKEN, null);

@@ -12,6 +12,8 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.text.Normalizer;
 
 import javax.inject.Inject;
@@ -63,6 +65,39 @@ public class CoverArtFetcher {
         Log.d(TAG, "Lookup miss provider=itunes_generic");
 
         return null;
+    }
+
+    public List<Long> fetchDiscogsTrackDurations(String artist, String album) {
+        List<DiscogsTrackInfo> trackInfos = fetchDiscogsTrackInfos(artist, album);
+        if (trackInfos == null || trackInfos.isEmpty()) return null;
+        List<Long> durations = new ArrayList<>();
+        for (DiscogsTrackInfo info : trackInfos) {
+            durations.add(info != null ? info.durationMs : 0L);
+        }
+        return durations;
+    }
+
+    public List<DiscogsTrackInfo> fetchDiscogsTrackInfos(String artist, String album) {
+        String term = buildSearchTerm(artist, album);
+        if (term.isEmpty()) return null;
+
+        String endpoint = "https://api.discogs.com/database/search?type=release&per_page=50&q="
+                + Uri.encode(term);
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+        Log.d(TAG, "Discogs duration request term='" + term + "' token=" + (token.isEmpty() ? "none" : "configured"));
+
+        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            Long releaseId = parseBestDiscogsReleaseId(reader, artist, album);
+            if (releaseId == null) {
+                return null;
+            }
+            return fetchDiscogsTrackInfosForRelease(releaseId.longValue());
+        } catch (Exception e) {
+            Log.d(TAG, "Discogs duration lookup failed for " + term, e);
+            return null;
+        }
     }
 
     private String fetchFromDeezer(String artist, String album) {
@@ -228,6 +263,133 @@ public class CoverArtFetcher {
         }
         Log.d(TAG, "Discogs best score=" + bestScore + " selected=" + bestArtwork);
         return bestArtwork;
+    }
+
+    private Long parseBestDiscogsReleaseId(JsonReader reader, String expectedArtist, String expectedAlbum) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        Long bestReleaseId = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("results".equals(name)) {
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    long releaseId = -1L;
+                    String title = "";
+
+                    reader.beginObject();
+                    while (reader.hasNext()) {
+                        String child = reader.nextName();
+                        if ("id".equals(child) && reader.peek() != JsonToken.NULL) {
+                            releaseId = reader.nextLong();
+                        } else if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                            title = reader.nextString();
+                        } else {
+                            reader.skipValue();
+                        }
+                    }
+                    reader.endObject();
+
+                    String candidateArtist = "";
+                    String candidateAlbum = title;
+                    int separator = title.indexOf(" - ");
+                    if (separator > 0) {
+                        candidateArtist = title.substring(0, separator);
+                        candidateAlbum = title.substring(separator + 3);
+                    }
+
+                    int score = scoreCandidate(wantedArtist, wantedAlbum,
+                            normalize(candidateArtist), normalize(candidateAlbum));
+                    if (releaseId > 0L && score > bestScore) {
+                        bestScore = score;
+                        bestReleaseId = releaseId;
+                    }
+                }
+                reader.endArray();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        if (bestReleaseId == null || bestScore < 90) {
+            Log.d(TAG, "Discogs duration best score below threshold score=" + bestScore + " threshold=90");
+            return null;
+        }
+        return bestReleaseId;
+    }
+
+    private List<DiscogsTrackInfo> fetchDiscogsTrackInfosForRelease(long releaseId) {
+        String endpoint = "https://api.discogs.com/releases/" + releaseId;
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+
+        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseTrackInfosFromDiscogsRelease(reader);
+        } catch (Exception e) {
+            Log.d(TAG, "Discogs release duration lookup failed for id=" + releaseId, e);
+            return null;
+        }
+    }
+
+    private List<DiscogsTrackInfo> parseTrackInfosFromDiscogsRelease(JsonReader reader) throws Exception {
+        List<DiscogsTrackInfo> tracks = new ArrayList<>();
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("tracklist".equals(name)) {
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    String title = null;
+                    String durationText = null;
+                    reader.beginObject();
+                    while (reader.hasNext()) {
+                        String child = reader.nextName();
+                        if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                            title = reader.nextString();
+                        } else if ("duration".equals(child) && reader.peek() != JsonToken.NULL) {
+                            durationText = reader.nextString();
+                        } else {
+                            reader.skipValue();
+                        }
+                    }
+                    reader.endObject();
+                    tracks.add(new DiscogsTrackInfo(title, parseDurationMs(durationText)));
+                }
+                reader.endArray();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+        return tracks;
+    }
+
+    private long parseDurationMs(String text) {
+        if (text == null) return 0L;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) return 0L;
+
+        try {
+            String[] parts = trimmed.split(":");
+            long totalSeconds = 0L;
+            if (parts.length == 2) {
+                totalSeconds = Integer.parseInt(parts[0].trim()) * 60L + Integer.parseInt(parts[1].trim());
+            } else if (parts.length == 3) {
+                totalSeconds = Integer.parseInt(parts[0].trim()) * 3600L
+                        + Integer.parseInt(parts[1].trim()) * 60L
+                        + Integer.parseInt(parts[2].trim());
+            } else {
+                return 0L;
+            }
+            return totalSeconds * 1000L;
+        } catch (Exception ignored) {
+            return 0L;
+        }
     }
 
     private String buildSearchTerm(String artist, String album) {
@@ -418,6 +580,16 @@ public class CoverArtFetcher {
         String ascii = Normalizer.normalize(lower, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "");
         return ascii.replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
+    }
+
+    public static class DiscogsTrackInfo {
+        public final String title;
+        public final long durationMs;
+
+        public DiscogsTrackInfo(String title, long durationMs) {
+            this.title = title;
+            this.durationMs = durationMs;
+        }
     }
 }
 

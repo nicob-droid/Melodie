@@ -20,6 +20,12 @@ public class DriveAudio {
 
     public long lastModified;
 
+    /** Duration from Google Drive audio metadata (ms). 0 if unavailable. */
+    public long durationMs;
+
+    /** Track number from Google Drive audio metadata. 0 if unavailable. */
+    public int trackNumber;
+
     @NonNull
     public String webContentLink = "";
 

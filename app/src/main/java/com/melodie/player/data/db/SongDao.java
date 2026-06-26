@@ -56,6 +56,9 @@ public interface SongDao {
     @Query("SELECT * FROM songs WHERE source = :source")
     List<Song> getBySourceSync(String source);
 
+    @Query("SELECT * FROM songs WHERE source = 'DRIVE' AND duration <= 0 ORDER BY dateAdded DESC LIMIT :limit")
+    List<Song> getDriveSongsWithUnknownDurationSync(int limit);
+
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
             + "WHERE songs.favorite = 1 AND " + VISIBLE_SONGS_FILTER + " "
