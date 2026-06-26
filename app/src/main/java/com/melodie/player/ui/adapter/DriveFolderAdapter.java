@@ -79,6 +79,7 @@ public class DriveFolderAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     // ── API publique ────────────────────────────────────────────────────────
 
     public void submitFolders(List<DriveFolder> folders) {
+        Set<String> previousExpandedIds = new HashSet<>(expandedIds);
         expandedIds.clear();
         childrenByParentId.clear();
         myDriveRoots.clear();
@@ -100,6 +101,14 @@ public class DriveFolderAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         allFoldersById = unique;
         Set<String> knownIds = unique.keySet();
 
+        // Préserve les branches déjà ouvertes entre deux emissions LiveData
+        // (ex: après sélection d'un parent qui met à jour Room).
+        for (String id : previousExpandedIds) {
+            if (knownIds.contains(id)) {
+                expandedIds.add(id);
+            }
+        }
+
         // 2) Classement : racines Mon Drive, racines Shared Drive, enfants
         for (DriveFolder f : unique.values()) {
             String pid = f.parentDriveId == null ? "" : f.parentDriveId.trim();
@@ -119,8 +128,8 @@ public class DriveFolderAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         sharedDriveRoots.sort(alpha);
         for (List<DriveFolder> ch : childrenByParentId.values()) ch.sort(alpha);
 
-        // 4) Tout est replié par défaut (y compris les racines)
-        // L'utilisateur déploie manuellement en cliquant.
+        // 4) Premier chargement: tout replié par défaut.
+        // Rechargements suivants: l'état d'expansion utilisateur est conservé.
 
         rebuild();
     }

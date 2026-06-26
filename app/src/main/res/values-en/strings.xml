@@ -71,6 +71,7 @@
     <string name="drive_sign_in">Sign in with Google</string>
     <string name="drive_section_my_drive">My Drive</string>
     <string name="drive_section_shared">Shared drives</string>
+    <string name="drive_sync_and_add_sources_started">Drive sources added. Sync in progress...</string>
 
     <!-- Equalizer -->
     <string name="eq_preset">Preset</string>

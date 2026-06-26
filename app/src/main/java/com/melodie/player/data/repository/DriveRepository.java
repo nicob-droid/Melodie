@@ -1,7 +1,7 @@
 package com.melodie.player.data.repository;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+import android.media.MediaMetadataRetriever;
 import android.util.Log;
 
 import androidx.lifecycle.LiveData;
@@ -9,15 +9,17 @@ import androidx.lifecycle.MutableLiveData;
 
 import com.melodie.player.data.db.DriveAudioDao;
 import com.melodie.player.data.db.DriveFolderDao;
+import com.melodie.player.data.db.FolderSourceDao;
+import com.melodie.player.data.db.SongDao;
 import com.melodie.player.data.entity.DriveAudio;
 import com.melodie.player.data.entity.DriveFolder;
+import com.melodie.player.data.entity.FolderSource;
+import com.melodie.player.data.entity.Song;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.Scope;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
-import com.google.api.client.http.HttpRequestInitializer;
-import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
@@ -25,9 +27,11 @@ import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,14 +46,16 @@ import dagger.hilt.android.qualifiers.ApplicationContext;
 public class DriveRepository {
 
     private static final String TAG = "DriveRepository";
-    private static final String PREFS_NAME = "melodie_drive_prefs";
-    private static final String PREF_ACCOUNT = "drive_account";
+    private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
+    private static final String DRIVE_AUDIO_CACHE_DIR = "drive_audio_cache";
 
     private final Context context;
     private final DriveFolderDao driveFolderDao;
     private final DriveAudioDao driveAudioDao;
+    private final FolderSourceDao folderSourceDao;
+    private final SongDao songDao;
+    private final MusicRepository musicRepository;
     private final ExecutorService executor;
-    private final SharedPreferences prefs;
     private final MutableLiveData<String> authStatus = new MutableLiveData<>("LOGGED_OUT");
     private final MutableLiveData<Boolean> isLoading = new MutableLiveData<>(false);
 
@@ -60,12 +66,17 @@ public class DriveRepository {
     public DriveRepository(@ApplicationContext Context context,
                           DriveFolderDao driveFolderDao,
                           DriveAudioDao driveAudioDao,
+                          FolderSourceDao folderSourceDao,
+                          SongDao songDao,
+                          MusicRepository musicRepository,
                           ExecutorService executor) {
         this.context = context;
         this.driveFolderDao = driveFolderDao;
         this.driveAudioDao = driveAudioDao;
+        this.folderSourceDao = folderSourceDao;
+        this.songDao = songDao;
+        this.musicRepository = musicRepository;
         this.executor = executor;
-        this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         initializeGoogleSignIn();
     }
 
@@ -226,38 +237,7 @@ public class DriveRepository {
 
                 isLoading.postValue(true);
 
-                // Cherche les fichiers audio dans le dossier
-                String query = "'" + folderId + "' in parents and " +
-                        "(mimeType='audio/mpeg' or mimeType='audio/wav' or mimeType='audio/ogg' or " +
-                        "mimeType='audio/flac' or mimeType='audio/m4a') and trashed=false";
-
-                Drive.Files.List request = driveService.files().list()
-                        .setQ(query)
-                        .setSpaces("drive")
-                        .setFields("files(id, name, size, modifiedTime, webContentLink, mimeType)")
-                        .setPageSize(100);
-
-                FileList result = request.execute();
-                List<File> files = result.getFiles();
-
-                // Supprime les anciens fichiers du dossier
-                driveAudioDao.deleteByFolder(folderId);
-
-                if (files != null && !files.isEmpty()) {
-                    List<DriveAudio> audioList = new ArrayList<>();
-                    for (File file : files) {
-                        DriveAudio audio = new DriveAudio();
-                        audio.fileId = file.getId();
-                        audio.fileName = file.getName();
-                        audio.folderId = folderId;
-                        audio.fileSize = file.getSize() != null ? file.getSize() : 0;
-                        audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0;
-                        audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
-                        audio.downloaded = false;
-                        audioList.add(audio);
-                    }
-                    driveAudioDao.insertAll(audioList);
-                }
+                syncAudioFilesFromFolder(folderId);
 
                 isLoading.postValue(false);
             } catch (IOException e) {
@@ -273,24 +253,69 @@ public class DriveRepository {
         executor.execute(() -> {
             try {
                 isLoading.postValue(true);
+                if (driveService == null) {
+                    Log.w(TAG, "Drive service is null, skipping selected folders sync");
+                    return;
+                }
                 List<DriveFolder> selectedFolders = driveFolderDao.getSelected();
-
-                for (DriveFolder folder : selectedFolders) {
-                    listAudioFilesFromFolderSync(folder.driveId);
+                if (selectedFolders == null) {
+                    selectedFolders = new ArrayList<>();
                 }
 
-                isLoading.postValue(false);
+                // Les dossiers cochés dans l'écran Drive deviennent de vraies sources persistées.
+                persistDriveFolderSources(selectedFolders);
+
+                // On reconstruit les morceaux Drive à partir de l'état courant pour éviter les doublons
+                // et supprimer les entrées des dossiers qui ne sont plus sélectionnés.
+                driveAudioDao.clear();
+                songDao.deleteBySource(Song.SOURCE_DRIVE);
+
+                List<Song> driveSongs = new ArrayList<>();
+
+                for (DriveFolder folder : selectedFolders) {
+                    FolderSource source = folderSourceDao.getByTreeUri(DRIVE_SOURCE_PREFIX + folder.driveId);
+                    if (source == null) {
+                        upsertDriveFolderSource(folder);
+                        source = folderSourceDao.getByTreeUri(DRIVE_SOURCE_PREFIX + folder.driveId);
+                    }
+                    List<DriveAudio> audioFiles = syncAudioFilesFromFolder(folder.driveId);
+                    if (source != null && audioFiles != null && !audioFiles.isEmpty()) {
+                        for (DriveAudio audio : audioFiles) {
+                            Song song = buildDriveSong(folder, source, audio);
+                            if (song != null) {
+                                driveSongs.add(song);
+                            }
+                        }
+                    }
+                }
+
+                if (!driveSongs.isEmpty()) {
+                    songDao.insertAll(driveSongs);
+                }
+
+                musicRepository.rebuildAlbumsFromSongs();
             } catch (Exception e) {
                 Log.e(TAG, "Error syncing folders", e);
-                isLoading.postValue(false);
             } finally {
+                isLoading.postValue(false);
                 if (onDone != null) onDone.run();
             }
         });
     }
 
-    private void listAudioFilesFromFolderSync(String folderId) throws IOException {
-        if (driveService == null) return;
+    private List<DriveAudio> syncAudioFilesFromFolder(String folderId) throws IOException {
+        List<DriveAudio> audioList = new ArrayList<>();
+        if (driveService == null) return audioList;
+
+        Map<String, DriveAudio> existingById = new HashMap<>();
+        List<DriveAudio> existing = driveAudioDao.getByFolderSync(folderId);
+        if (existing != null) {
+            for (DriveAudio prev : existing) {
+                if (prev != null && prev.fileId != null && !prev.fileId.trim().isEmpty()) {
+                    existingById.put(prev.fileId, prev);
+                }
+            }
+        }
 
         String query = "'" + folderId + "' in parents and " +
                 "(mimeType='audio/mpeg' or mimeType='audio/wav' or mimeType='audio/ogg' or " +
@@ -308,7 +333,6 @@ public class DriveRepository {
         driveAudioDao.deleteByFolder(folderId);
 
         if (files != null && !files.isEmpty()) {
-            List<DriveAudio> audioList = new ArrayList<>();
             for (File file : files) {
                 DriveAudio audio = new DriveAudio();
                 audio.fileId = file.getId();
@@ -318,10 +342,307 @@ public class DriveRepository {
                 audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0;
                 audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
                 audio.downloaded = false;
+                audio.localPath = "";
+
+                DriveAudio prev = existingById.get(audio.fileId);
+                if (prev != null && canReuseCachedFile(prev, audio)) {
+                    audio.downloaded = true;
+                    audio.localPath = prev.localPath;
+                }
+
                 audioList.add(audio);
             }
             driveAudioDao.insertAll(audioList);
         }
+
+        return audioList;
+    }
+
+    private Song buildDriveSong(DriveFolder folder, FolderSource source, DriveAudio audio) {
+        if (audio == null || audio.fileId == null || audio.fileId.trim().isEmpty()) return null;
+
+        String sourceName = source != null && source.displayName != null && !source.displayName.trim().isEmpty()
+                ? source.displayName.trim()
+                : (folder != null && folder.name != null && !folder.name.trim().isEmpty() ? folder.name.trim() : "Google Drive");
+        String folderName = folder != null ? folder.name : null;
+        String baseName = stripExtension(audio.fileName);
+        TrackMetadata metadata = parseTrackMetadata(baseName, folderName, sourceName);
+
+        Song song = new Song();
+        song.id = "D_" + audio.fileId;
+        song.title = metadata.title;
+        song.artist = metadata.artist != null && !metadata.artist.trim().isEmpty() ? metadata.artist.trim() : sourceName;
+        song.album = metadata.album != null && !metadata.album.trim().isEmpty() ? metadata.album.trim() : sourceName;
+        song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
+        song.trackNumber = 0;
+        song.duration = 0L;
+        if (audio.downloaded && audio.localPath != null && !audio.localPath.trim().isEmpty()) {
+            song.path = audio.localPath.trim();
+            song.duration = extractDurationMs(song.path);
+        } else if (audio.webContentLink != null && !audio.webContentLink.trim().isEmpty()) {
+            song.path = audio.webContentLink.trim();
+        } else {
+            song.path = "drive://file/" + audio.fileId;
+        }
+        song.source = Song.SOURCE_DRIVE;
+        song.folderSourceId = source != null ? source.id : 0L;
+        song.cover = null;
+        song.favorite = false;
+        song.dateAdded = audio.lastModified > 0L ? audio.lastModified : System.currentTimeMillis();
+        return song;
+    }
+
+    private TrackMetadata parseTrackMetadata(String baseName, String fallbackFolderName, String fallbackSourceName) {
+        String normalizedBase = baseName != null ? baseName.trim() : "";
+        AlbumContext folderContext = parseAlbumContext(fallbackFolderName);
+        AlbumContext sourceContext = parseAlbumContext(fallbackSourceName);
+
+        String artist = null;
+        String title = normalizedBase;
+
+        int dashIndex = normalizedBase.indexOf(" - ");
+        if (dashIndex > 0 && dashIndex < normalizedBase.length() - 3) {
+            String left = normalizedBase.substring(0, dashIndex).trim();
+            String right = normalizedBase.substring(dashIndex + 3).trim();
+            if (isLikelyArtist(left)) {
+                artist = left;
+                title = right;
+            } else if (isTrackNumberToken(left)) {
+                title = right;
+            }
+        }
+
+        title = stripLeadingTrackNumber(title);
+
+        if (title == null || title.isEmpty()) {
+            title = folderContext.album != null && !folderContext.album.trim().isEmpty()
+                    ? folderContext.album.trim()
+                    : "Unknown";
+        }
+
+        if (artist == null || artist.trim().isEmpty()) {
+            artist = firstNonEmpty(folderContext.artist, sourceContext.artist);
+        }
+
+        String album = firstNonEmpty(folderContext.album, sourceContext.album);
+
+        TrackMetadata metadata = new TrackMetadata();
+        metadata.artist = artist;
+        metadata.title = title;
+        metadata.album = album;
+        return metadata;
+    }
+
+    private AlbumContext parseAlbumContext(String rawName) {
+        AlbumContext context = new AlbumContext();
+        if (rawName == null || rawName.trim().isEmpty()) {
+            return context;
+        }
+
+        String normalized = rawName.trim();
+        int dashIndex = normalized.indexOf(" - ");
+        if (dashIndex > 0 && dashIndex < normalized.length() - 3) {
+            String left = normalized.substring(0, dashIndex).trim();
+            String right = normalized.substring(dashIndex + 3).trim();
+            if (isLikelyArtist(left)) {
+                context.artist = left;
+                context.album = normalizeAlbumLabel(right);
+                return context;
+            }
+        }
+
+        context.album = normalizeAlbumLabel(normalized);
+        return context;
+    }
+
+    private String normalizeAlbumLabel(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        if (v.isEmpty()) return null;
+
+        // Remove common year prefixes: [2004] Album, (2004) Album, 2004 - Album
+        v = v.replaceFirst("^\\[(19|20)\\d{2}\\]\\s*", "");
+        v = v.replaceFirst("^\\((19|20)\\d{2}\\)\\s*", "");
+        v = v.replaceFirst("^(19|20)\\d{2}\\s*-\\s*", "");
+        v = v.trim();
+
+        return v.isEmpty() ? null : v;
+    }
+
+    private String stripLeadingTrackNumber(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        if (v.isEmpty()) return v;
+
+        v = v.replaceFirst("^(?i)track\\s*\\d{1,3}\\s*[-_.)]\\s*", "");
+        v = v.replaceFirst("^\\d{1,3}\\s*[-_.)]\\s*", "");
+        v = v.replaceFirst("^\\d{1,3}\\s+", "");
+        return v.trim();
+    }
+
+    private boolean isTrackNumberToken(String token) {
+        if (token == null) return false;
+        String t = token.trim();
+        if (t.isEmpty() || t.length() > 3) return false;
+        for (int i = 0; i < t.length(); i++) {
+            if (!Character.isDigit(t.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isLikelyArtist(String value) {
+        if (value == null) return false;
+        String v = value.trim();
+        if (v.isEmpty() || isTrackNumberToken(v)) return false;
+
+        boolean hasLetter = false;
+        for (int i = 0; i < v.length(); i++) {
+            if (Character.isLetter(v.charAt(i))) {
+                hasLetter = true;
+                break;
+            }
+        }
+        return hasLetter;
+    }
+
+    private String firstNonEmpty(String a, String b) {
+        if (a != null && !a.trim().isEmpty()) return a.trim();
+        if (b != null && !b.trim().isEmpty()) return b.trim();
+        return null;
+    }
+
+    private String stripExtension(String fileName) {
+        if (fileName == null) return "";
+        int dot = fileName.lastIndexOf('.');
+        if (dot > 0) {
+            return fileName.substring(0, dot).trim();
+        }
+        return fileName.trim();
+    }
+
+    private long toDriveLogicalAlbumId(long folderSourceId, String artist, String album) {
+        String key = folderSourceId + "||" + normalize(artist) + "||" + normalize(album);
+        long hash = 1469598103934665603L;
+        for (int i = 0; i < key.length(); i++) {
+            hash ^= key.charAt(i);
+            hash *= 1099511628211L;
+        }
+        if (hash == Long.MIN_VALUE) return 0L;
+        return Math.abs(hash);
+    }
+
+    private String normalize(String value) {
+        if (value == null) return "";
+        return value.trim().toLowerCase();
+    }
+
+    private boolean canReuseCachedFile(DriveAudio previous, DriveAudio current) {
+        if (previous == null || current == null) return false;
+        if (!previous.downloaded) return false;
+        if (previous.localPath == null || previous.localPath.trim().isEmpty()) return false;
+
+        java.io.File local = new java.io.File(previous.localPath.trim());
+        if (!local.exists() || !local.isFile() || local.length() <= 0L) return false;
+
+        return previous.lastModified == current.lastModified && previous.fileSize == current.fileSize;
+    }
+
+    private String downloadDriveAudioToCache(String fileId, String fileName, String mimeType) {
+        if (driveService == null || fileId == null || fileId.trim().isEmpty()) return null;
+        try {
+            java.io.File cacheDir = new java.io.File(context.getFilesDir(), DRIVE_AUDIO_CACHE_DIR);
+            if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+                Log.w(TAG, "Cannot create Drive cache dir: " + cacheDir.getAbsolutePath());
+                return null;
+            }
+
+            String extension = resolveExtension(fileName, mimeType);
+            String safeName = sanitizeFileName(fileName);
+            java.io.File target = new java.io.File(cacheDir, fileId + "_" + safeName + extension);
+            java.io.File temp = new java.io.File(cacheDir, fileId + ".tmp");
+
+            if (temp.exists()) {
+                // Nettoie un ancien telechargement interrompu.
+                //noinspection ResultOfMethodCallIgnored
+                temp.delete();
+            }
+
+            try (OutputStream out = new FileOutputStream(temp)) {
+                driveService.files().get(fileId).executeMediaAndDownloadTo(out);
+            }
+
+            if (target.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                target.delete();
+            }
+
+            if (!temp.renameTo(target)) {
+                Log.w(TAG, "Cannot move temp Drive file to target for id=" + fileId);
+                //noinspection ResultOfMethodCallIgnored
+                temp.delete();
+                return null;
+            }
+
+            return target.getAbsolutePath();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to download Drive audio file id=" + fileId + " name=" + fileName, e);
+            return null;
+        }
+    }
+
+    private long extractDurationMs(String path) {
+        if (path == null || path.trim().isEmpty()) return 0L;
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(path.trim());
+            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            if (value == null || value.trim().isEmpty()) return 0L;
+            return Long.parseLong(value.trim());
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot extract duration for Drive file: " + path, e);
+            return 0L;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+                // ignore
+            }
+        }
+    }
+
+    private String sanitizeFileName(String fileName) {
+        String base = fileName != null ? fileName.trim() : "";
+        if (base.isEmpty()) return "track";
+        return base.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String resolveExtension(String fileName, String mimeType) {
+        if (fileName != null) {
+            int dot = fileName.lastIndexOf('.');
+            if (dot >= 0 && dot < fileName.length() - 1) {
+                return "";
+            }
+        }
+
+        if ("audio/mpeg".equalsIgnoreCase(mimeType)) return ".mp3";
+        if ("audio/flac".equalsIgnoreCase(mimeType)) return ".flac";
+        if ("audio/wav".equalsIgnoreCase(mimeType) || "audio/x-wav".equalsIgnoreCase(mimeType)) return ".wav";
+        if ("audio/ogg".equalsIgnoreCase(mimeType)) return ".ogg";
+        if ("audio/m4a".equalsIgnoreCase(mimeType) || "audio/mp4".equalsIgnoreCase(mimeType)) return ".m4a";
+        return "";
+    }
+
+    private static class TrackMetadata {
+        String artist;
+        String title;
+        String album;
+    }
+
+    private static class AlbumContext {
+        String artist;
+        String album;
     }
 
     public LiveData<List<DriveAudio>> getAudioFilesFromFolder(String folderId) {
@@ -344,8 +665,44 @@ public class DriveRepository {
         executor.execute(() -> {
             for (DriveFolder f : folders) {
                 driveFolderDao.update(f);
+                if (f != null && f.selected) {
+                    upsertDriveFolderSource(f);
+                }
             }
         });
+    }
+
+    private void persistDriveFolderSources(List<DriveFolder> folders) {
+        if (folders == null || folders.isEmpty()) return;
+        for (DriveFolder folder : folders) {
+            upsertDriveFolderSource(folder);
+        }
+    }
+
+    private void upsertDriveFolderSource(DriveFolder folder) {
+        if (folder == null || folder.driveId == null || folder.driveId.trim().isEmpty()) return;
+
+        String normalizedId = folder.driveId.trim();
+        String treeUri = DRIVE_SOURCE_PREFIX + normalizedId;
+        FolderSource existing = folderSourceDao.getByTreeUri(treeUri);
+
+        if (existing != null) {
+            if (folder.name != null && !folder.name.trim().isEmpty()) {
+                existing.displayName = folder.name.trim();
+            }
+            existing.enabled = true;
+            folderSourceDao.update(existing);
+            return;
+        }
+
+        FolderSource source = new FolderSource();
+        source.displayName = (folder.name != null && !folder.name.trim().isEmpty())
+                ? folder.name.trim()
+                : "Google Drive";
+        source.treeUri = treeUri;
+        source.enabled = true;
+        source.createdAt = System.currentTimeMillis();
+        folderSourceDao.insert(source);
     }
 
     private boolean isSharedDriveFolder(File file,
@@ -390,6 +747,8 @@ public class DriveRepository {
         executor.execute(() -> {
             driveFolderDao.deleteAll();
             driveAudioDao.clear();
+            songDao.deleteBySource(Song.SOURCE_DRIVE);
+            musicRepository.rebuildAlbumsFromSongs();
         });
     }
 

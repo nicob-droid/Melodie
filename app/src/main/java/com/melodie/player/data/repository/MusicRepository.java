@@ -22,8 +22,13 @@ import com.melodie.player.data.model.ArtistData;
 import com.melodie.player.data.model.PlaylistSummary;
 import com.melodie.player.data.scan.MediaStoreScanner;
 
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Set;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.function.LongConsumer;
@@ -198,6 +203,7 @@ public class MusicRepository {
                         : existing.displayName;
                 existing.enabled = true;
                 folderSourceDao.update(existing);
+                rebuildAlbumsFromSongs();
                 return;
             }
 
@@ -209,6 +215,7 @@ public class MusicRepository {
             source.enabled = true;
             source.createdAt = System.currentTimeMillis();
             folderSourceDao.insert(source);
+            rebuildAlbumsFromSongs();
         });
     }
 
@@ -221,6 +228,8 @@ public class MusicRepository {
                 // Rescan pour refléter le changement d'état (activation / désactivation).
                 // On supprime aussi les chansons orphelines des sources désactivées.
                 performFullScan();
+            } else {
+                rebuildAlbumsFromSongs();
             }
         });
     }
@@ -233,6 +242,8 @@ public class MusicRepository {
             if (shouldRescanLocalLibrary(source)) {
                 // Rescan pour refléter le changement d'état.
                 performFullScan();
+            } else {
+                rebuildAlbumsFromSongs();
             }
         });
     }
@@ -244,8 +255,25 @@ public class MusicRepository {
             if (shouldRescanLocalLibrary(source)) {
                 // Rescan pour supprimer les chansons issues de ce dossier de la bibliothèque.
                 performFullScan();
+            } else {
+                songDao.deleteDriveSongsByFolderSourceId(source.id);
+                rebuildAlbumsFromSongs();
             }
         });
+    }
+
+    /**
+     * Reconstruit les lignes de `albums` à partir des morceaux visibles dans `songs`.
+     * Les morceaux Drive désactivés restent stockés mais sont exclus de l'agrégation.
+     */
+    public void rebuildAlbumsFromSongs() {
+        Map<Long, Album> savedAlbums = new HashMap<>();
+        for (Album album : albumDao.getAllSync()) {
+            if (album != null) {
+                savedAlbums.put(album.id, album);
+            }
+        }
+        rebuildAlbumsFromSongs(savedAlbums);
     }
 
      public void scanLocal(Runnable onDone) {
@@ -340,37 +368,91 @@ public class MusicRepository {
       * tout en préservant les pochettes déjà téléchargées.
       */
      private void performFullScan() {
-         // 1. Snapshot des covers HTTP/NO_REMOTE_COVER valides AVANT de tout effacer.
-         //    On préserve aussi le sentinel __NO_REMOTE_COVER__ pour ne pas retenter
-         //    un fetch réseau sur des albums déjà confirmés sans pochette distante.
-         java.util.Map<Long, String> savedCovers = new java.util.HashMap<>();
-         for (Album album : albumDao.getAllSync()) {
-             if (album.cover != null && !album.cover.trim().isEmpty()
-                     && (album.cover.startsWith("http") || NO_REMOTE_COVER.equals(album.cover))) {
-                 savedCovers.put(album.id, album.cover);
-             }
-         }
-
          // 2. Scan MediaStore.
          MediaStoreScanner.ScanResult result = MediaStoreScanner.scan(context, buildActiveSourceRoots());
-
-         // 3. Pré-remplir la cover dans les albums avant insertion, pour que la LiveData
-         //    fire directement avec la bonne pochette HTTP.
-         //    Ainsi Glide charge l'URL HTTP directement, sans passer par content://.
-         for (Album album : result.albums) {
-             String savedCover = savedCovers.get(album.id);
-             if (savedCover != null) {
-                 album.cover = savedCover;
-             }
-         }
-
-         // 4. Mise en base en une seule passe – la LiveData ne fire qu'une fois
-         //    avec les pochettes déjà correctes.
          songDao.deleteBySource(Song.SOURCE_LOCAL);
          songDao.insertAll(result.songs);
-         albumDao.clear();
-         albumDao.insertAll(result.albums);
+          rebuildAlbumsFromSongs();
      }
+
+    private void rebuildAlbumsFromSongs(Map<Long, Album> savedAlbums) {
+        Map<String, Album> savedAlbumsBySignature = new HashMap<>();
+        if (savedAlbums != null && !savedAlbums.isEmpty()) {
+            for (Album saved : savedAlbums.values()) {
+                if (saved == null) continue;
+                String signature = albumSignature(saved.artist, saved.name);
+                if (signature != null && !signature.isEmpty()) {
+                    savedAlbumsBySignature.put(signature, saved);
+                }
+            }
+        }
+
+        Set<Long> enabledDriveSourceIds = new HashSet<>();
+        for (FolderSource source : folderSourceDao.getAllSync()) {
+            if (source != null && source.enabled && isDriveTreeUri(source.treeUri) && source.id > 0L) {
+                enabledDriveSourceIds.add(source.id);
+            }
+        }
+
+        Map<Long, Album> albumMap = new HashMap<>();
+        for (Song song : songDao.getAll()) {
+            if (song == null) continue;
+            if (Song.SOURCE_DRIVE.equals(song.source) && !enabledDriveSourceIds.contains(song.folderSourceId)) {
+                continue;
+            }
+
+            Album album = albumMap.get(song.albumId);
+            if (album == null) {
+                album = new Album();
+                album.id = song.albumId;
+                album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
+                album.artist = song.artist != null && !song.artist.trim().isEmpty() ? song.artist.trim() : null;
+                album.cover = song.cover != null && !song.cover.trim().isEmpty() ? song.cover.trim() : null;
+                album.releaseDate = null;
+                album.count = 0;
+                albumMap.put(album.id, album);
+            } else {
+                if ((album.artist == null || album.artist.trim().isEmpty())
+                        && song.artist != null && !song.artist.trim().isEmpty()) {
+                    album.artist = song.artist.trim();
+                }
+                if ((album.cover == null || album.cover.trim().isEmpty())
+                        && song.cover != null && !song.cover.trim().isEmpty()) {
+                    album.cover = song.cover.trim();
+                }
+                if (album.name == null || album.name.trim().isEmpty()) {
+                    album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
+                }
+            }
+            album.count++;
+        }
+
+        for (Album album : albumMap.values()) {
+            Album saved = savedAlbums != null ? savedAlbums.get(album.id) : null;
+            if (saved == null && !savedAlbumsBySignature.isEmpty()) {
+                saved = savedAlbumsBySignature.get(albumSignature(album.artist, album.name));
+            }
+            if (saved != null) {
+                if (shouldUseSavedCover(album.cover, saved.cover)) {
+                    album.cover = saved.cover != null ? saved.cover.trim() : null;
+                }
+                if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
+                        && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
+                    album.releaseDate = saved.releaseDate;
+                }
+            }
+        }
+
+        List<Album> rebuiltAlbums = new ArrayList<>(albumMap.values());
+        rebuiltAlbums.sort(Comparator
+                .comparing((Album album) -> album.artist != null ? album.artist : "", String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(album -> album.name != null ? album.name : "", String.CASE_INSENSITIVE_ORDER));
+
+        albumDao.clear();
+        if (!rebuiltAlbums.isEmpty()) {
+            albumDao.insertAll(rebuiltAlbums);
+        }
+    }
 
      private List<MediaStoreScanner.SourceRoot> buildActiveSourceRoots() {
          List<MediaStoreScanner.SourceRoot> roots = new ArrayList<>();
@@ -426,5 +508,40 @@ public class MusicRepository {
      private boolean isDriveTreeUri(String treeUri) {
          return treeUri != null && treeUri.startsWith(DRIVE_SOURCE_PREFIX);
      }
+
+      private String albumSignature(String artist, String albumName) {
+          String normalizedArtist = normalizeText(artist);
+          String normalizedAlbum = normalizeText(albumName);
+          if (normalizedAlbum.isEmpty()) return "";
+          return normalizedArtist + "||" + normalizedAlbum;
+      }
+
+      private String normalizeText(String value) {
+          if (value == null) return "";
+          return value.trim().toLowerCase();
+      }
+
+        private boolean shouldUseSavedCover(String currentCover, String savedCover) {
+            String current = currentCover != null ? currentCover.trim() : "";
+            String saved = savedCover != null ? savedCover.trim() : "";
+            if (saved.isEmpty()) return false;
+
+            // Preserve already resolved remote covers across album rebuilds.
+            if (isHttpCover(saved) && !isHttpCover(current)) return true;
+
+            // Preserve the "no remote cover" sentinel to avoid repeated remote lookups
+            // when local content:// albumart keeps failing.
+            if (NO_REMOTE_COVER.equals(saved) && (current.isEmpty() || isContentCover(current))) return true;
+
+            return current.isEmpty();
+        }
+
+        private boolean isHttpCover(String cover) {
+            return cover != null && cover.startsWith("http");
+        }
+
+        private boolean isContentCover(String cover) {
+            return cover != null && cover.startsWith("content://");
+        }
 }
 

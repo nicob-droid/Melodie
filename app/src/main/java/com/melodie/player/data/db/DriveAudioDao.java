@@ -26,6 +26,9 @@ public interface DriveAudioDao {
     @Query("SELECT * FROM drive_audio_files WHERE folderId = :folderId ORDER BY fileName COLLATE NOCASE ASC")
     LiveData<List<DriveAudio>> observeByFolder(String folderId);
 
+    @Query("SELECT * FROM drive_audio_files WHERE folderId = :folderId")
+    List<DriveAudio> getByFolderSync(String folderId);
+
     @Query("SELECT * FROM drive_audio_files WHERE downloaded = 1 ORDER BY fileName COLLATE NOCASE ASC")
     LiveData<List<DriveAudio>> observeDownloaded();
 

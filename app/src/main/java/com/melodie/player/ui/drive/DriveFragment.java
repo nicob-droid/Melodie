@@ -85,7 +85,7 @@ public class DriveFragment extends Fragment {
         // Bouton Sync
         syncButton.setOnClickListener(v -> {
             viewModel.syncSelectedFolders();
-            Toast.makeText(requireContext(), "Synchronisation en cours...", Toast.LENGTH_SHORT).show();
+            Toast.makeText(requireContext(), R.string.drive_sync_and_add_sources_started, Toast.LENGTH_SHORT).show();
         });
 
         // Observers
