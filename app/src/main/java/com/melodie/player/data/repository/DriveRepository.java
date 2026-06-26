@@ -60,6 +60,7 @@ public class DriveRepository {
     private final MutableLiveData<Boolean> isLoading = new MutableLiveData<>(false);
 
     private Drive driveService;
+    private volatile String driveAccessToken;
     private GoogleSignInClient googleSignInClient;
 
     @Inject
@@ -103,6 +104,17 @@ public class DriveRepository {
     public void setDriveService(Drive drive) {
         this.driveService = drive;
         authStatus.postValue("LOGGED_IN");
+    }
+
+    public void setDriveAccessToken(String accessToken) {
+        if (accessToken == null || accessToken.trim().isEmpty()) {
+            return;
+        }
+        this.driveAccessToken = accessToken.trim();
+    }
+
+    public String getDriveAccessToken() {
+        return driveAccessToken;
     }
 
     public boolean isLoggedIn() {
@@ -376,14 +388,8 @@ public class DriveRepository {
         song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
         song.trackNumber = 0;
         song.duration = 0L;
-        if (audio.downloaded && audio.localPath != null && !audio.localPath.trim().isEmpty()) {
-            song.path = audio.localPath.trim();
-            song.duration = extractDurationMs(song.path);
-        } else if (audio.webContentLink != null && !audio.webContentLink.trim().isEmpty()) {
-            song.path = audio.webContentLink.trim();
-        } else {
-            song.path = "drive://file/" + audio.fileId;
-        }
+        // Streaming direct: la resolution vers Drive API (alt=media) est faite dans PlaybackService.
+        song.path = "drive://file/" + audio.fileId;
         song.source = Song.SOURCE_DRIVE;
         song.folderSourceId = source != null ? source.id : 0L;
         song.cover = null;
@@ -743,6 +749,7 @@ public class DriveRepository {
     public void logout() {
         googleSignInClient.signOut();
         driveService = null;
+        driveAccessToken = null;
         authStatus.postValue("LOGGED_OUT");
         executor.execute(() -> {
             driveFolderDao.deleteAll();

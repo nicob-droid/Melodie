@@ -110,6 +110,8 @@ public class DriveViewModel extends ViewModel {
                             "oauth2:https://www.googleapis.com/auth/drive.readonly"
                     );
 
+                    repository.setDriveAccessToken(accessToken);
+
                     // Créer le Drive service avec le Bearer token
                     HttpRequestInitializer httpRequestInitializer = request -> {
                         request.getHeaders().setAuthorization("Bearer " + accessToken);
@@ -139,6 +141,7 @@ public class DriveViewModel extends ViewModel {
             HttpRequestInitializer httpRequestInitializer = request -> {
                 request.getHeaders().setAuthorization("Bearer " + idToken);
             };
+
 
             Drive driveService = new Drive.Builder(
                     new NetHttpTransport(),
