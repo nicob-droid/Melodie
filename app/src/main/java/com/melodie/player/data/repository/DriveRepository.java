@@ -1,6 +1,7 @@
 package com.melodie.player.data.repository;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.media.MediaMetadataRetriever;
 import android.util.Log;
 
@@ -15,11 +16,15 @@ import com.melodie.player.data.entity.DriveAudio;
 import com.melodie.player.data.entity.DriveFolder;
 import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Song;
+import com.google.android.gms.auth.GoogleAuthUtil;
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.Scope;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
+import com.google.api.client.http.HttpRequestInitializer;
+import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
@@ -48,6 +53,8 @@ public class DriveRepository {
     private static final String TAG = "DriveRepository";
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
     private static final String DRIVE_AUDIO_CACHE_DIR = "drive_audio_cache";
+    private static final String PREFS_DRIVE_AUTH = "drive_auth";
+    private static final String KEY_DRIVE_ACCESS_TOKEN = "drive_access_token";
 
     private final Context context;
     private final DriveFolderDao driveFolderDao;
@@ -56,6 +63,7 @@ public class DriveRepository {
     private final SongDao songDao;
     private final MusicRepository musicRepository;
     private final ExecutorService executor;
+    private final SharedPreferences drivePrefs;
     private final MutableLiveData<String> authStatus = new MutableLiveData<>("LOGGED_OUT");
     private final MutableLiveData<Boolean> isLoading = new MutableLiveData<>(false);
 
@@ -78,7 +86,10 @@ public class DriveRepository {
         this.songDao = songDao;
         this.musicRepository = musicRepository;
         this.executor = executor;
+        this.drivePrefs = context.getSharedPreferences(PREFS_DRIVE_AUTH, Context.MODE_PRIVATE);
         initializeGoogleSignIn();
+        restorePersistedSession();
+        refreshSessionSilentlyIfPossible();
     }
 
     private void initializeGoogleSignIn() {
@@ -111,6 +122,7 @@ public class DriveRepository {
             return;
         }
         this.driveAccessToken = accessToken.trim();
+        drivePrefs.edit().putString(KEY_DRIVE_ACCESS_TOKEN, this.driveAccessToken).apply();
     }
 
     public String getDriveAccessToken() {
@@ -750,6 +762,7 @@ public class DriveRepository {
         googleSignInClient.signOut();
         driveService = null;
         driveAccessToken = null;
+        drivePrefs.edit().remove(KEY_DRIVE_ACCESS_TOKEN).apply();
         authStatus.postValue("LOGGED_OUT");
         executor.execute(() -> {
             driveFolderDao.deleteAll();
@@ -773,5 +786,52 @@ public class DriveRepository {
             return;
         }
         Log.e(TAG, context, e);
+    }
+
+    private void restorePersistedSession() {
+        String token = drivePrefs.getString(KEY_DRIVE_ACCESS_TOKEN, null);
+        if (token == null || token.trim().isEmpty()) {
+            return;
+        }
+
+        setDriveAccessToken(token.trim());
+        setDriveService(buildDriveService(token.trim()));
+        Log.d(TAG, "Restored persisted Drive session token");
+    }
+
+    private void refreshSessionSilentlyIfPossible() {
+        GoogleSignInAccount account = GoogleSignIn.getLastSignedInAccount(context);
+        if (account == null || account.getAccount() == null) {
+            return;
+        }
+
+        executor.execute(() -> {
+            try {
+                String refreshedToken = GoogleAuthUtil.getToken(
+                        context,
+                        account.getAccount(),
+                        "oauth2:https://www.googleapis.com/auth/drive.readonly"
+                );
+                if (refreshedToken != null && !refreshedToken.trim().isEmpty()) {
+                    setDriveAccessToken(refreshedToken.trim());
+                    setDriveService(buildDriveService(refreshedToken.trim()));
+                    Log.d(TAG, "Drive session refreshed silently");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Silent Drive session refresh failed", e);
+            }
+        });
+    }
+
+    private Drive buildDriveService(String accessToken) {
+        HttpRequestInitializer httpRequestInitializer = request -> {
+            request.getHeaders().setAuthorization("Bearer " + accessToken);
+        };
+
+        return new Drive.Builder(
+                new NetHttpTransport(),
+                new GsonFactory(),
+                httpRequestInitializer
+        ).setApplicationName("Melodie").build();
     }
 }
