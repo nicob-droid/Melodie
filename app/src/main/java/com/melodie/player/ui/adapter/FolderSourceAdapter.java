@@ -70,9 +70,10 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
 
         void bind(FolderSource source, OnFolderSourceActionListener listener) {
             boolean isLocalSource = source.id == 0L; // Synthetic "Telephone / Music" source
+            boolean isDriveSource = source.treeUri != null && source.treeUri.startsWith("drive://folder/");
 
             title.setText(source.displayName);
-            subtitle.setText(source.treeUri);
+            subtitle.setText(isDriveSource ? "Google Drive" : source.treeUri);
             enabledSwitch.setOnCheckedChangeListener(null);
             enabledSwitch.setChecked(source.enabled);
             enabledSwitch.setEnabled(!isLocalSource);

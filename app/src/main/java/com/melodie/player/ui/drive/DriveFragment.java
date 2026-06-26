@@ -9,6 +9,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.Toast;
+import android.util.Log;
 
 import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
@@ -65,18 +66,7 @@ public class DriveFragment extends Fragment {
                 result -> handleSignInResult(result));
 
         // Setup RecyclerView
-        folderAdapter = new DriveFolderAdapter(new DriveFolderAdapter.OnFolderClickListener() {
-            @Override
-            public void onFolderClick(DriveFolder folder) {
-                // Optionnel: afficher les fichiers audio du dossier
-            }
-
-            @Override
-            public void onFolderSelected(DriveFolder folder) {
-                // Mettre à jour la sélection du dossier dans la base de données
-                viewModel.toggleFolderSelection(folder);
-            }
-        });
+        folderAdapter = new DriveFolderAdapter(folders -> viewModel.setFolderSelections(folders));
 
         recycler.setLayoutManager(new LinearLayoutManager(requireContext()));
         recycler.setAdapter(folderAdapter);
@@ -104,10 +94,15 @@ public class DriveFragment extends Fragment {
                 signInButton.setText("Déconnecter");
                 syncButton.setEnabled(true);
                 viewModel.loadDriveFolders();
+            } else if ("DRIVE_API_DISABLED".equals(status)) {
+                syncButton.setEnabled(false);
+                Toast.makeText(requireContext(),
+                        "Google Drive API n'est pas activée dans Google Cloud (drive.googleapis.com).",
+                        Toast.LENGTH_LONG).show();
             } else if ("LOGGED_OUT".equals(status)) {
                 signInButton.setText(R.string.drive_sign_in);
                 syncButton.setEnabled(false);
-                folderAdapter.submitList(null);
+                folderAdapter.submitFolders(null);
             }
         });
 
@@ -117,7 +112,7 @@ public class DriveFragment extends Fragment {
 
         viewModel.getDriveFolders().observe(getViewLifecycleOwner(), folders -> {
             if (folders != null) {
-                folderAdapter.submitList(folders);
+                folderAdapter.submitFolders(folders);
             }
         });
 
@@ -162,12 +157,15 @@ public class DriveFragment extends Fragment {
             } else if (code == GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS) {
                 msg = "Connexion déjà en cours";
             } else if (code == GoogleSignInStatusCodes.DEVELOPER_ERROR) {
-                msg = "Erreur config OAuth (SHA-1 / package)";
+                msg = "Erreur config OAuth (code 10). Vérifie google-services.json, package com.melodie.player et SHA-1 debug/release dans Firebase.";
             } else {
                 msg = "Erreur Google Sign-In (code " + code + ")";
             }
             Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show();
-            android.util.Log.e("DriveFragment", "Sign-in failed with code=" + code, e);
+            int webClientResId = requireContext().getResources()
+                    .getIdentifier("default_web_client_id", "string", requireContext().getPackageName());
+            Log.e("DriveFragment", "Sign-in failed with code=" + code
+                    + ", hasDefaultWebClientId=" + (webClientResId != 0), e);
         }
     }
 }

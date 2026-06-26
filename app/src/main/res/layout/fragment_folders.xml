@@ -25,6 +25,16 @@
         app:iconGravity="textStart"
         app:iconPadding="8dp" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_add_drive_source"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/folders_add_drive_source"
+        app:icon="@android:drawable/ic_menu_upload"
+        app:iconGravity="textStart"
+        app:iconPadding="8dp" />
+
     <TextView
         android:id="@+id/folders_empty"
         android:layout_width="match_parent"

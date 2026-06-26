@@ -12,12 +12,12 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.documentfile.provider.DocumentFile;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.navigation.fragment.NavHostFragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-
-import androidx.documentfile.provider.DocumentFile;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.melodie.player.R;
@@ -54,6 +54,7 @@ public class FoldersFragment extends Fragment {
         RecyclerView recyclerView = view.findViewById(R.id.folders_recycler);
         emptyView = view.findViewById(R.id.folders_empty);
         MaterialButton addButton = view.findViewById(R.id.btn_add_source);
+        MaterialButton addDriveButton = view.findViewById(R.id.btn_add_drive_source);
 
         adapter = new FolderSourceAdapter(new FolderSourceAdapter.OnFolderSourceActionListener() {
             @Override
@@ -89,8 +90,14 @@ public class FoldersFragment extends Fragment {
                 });
 
         addButton.setOnClickListener(v -> addFolderLauncher.launch(null));
+        // Demande utilisateur: ouvrir directement Google Drive, sans popup intermédiaire.
+        addDriveButton.setOnClickListener(v -> openDriveScreen());
 
         viewModel.getFolderSources().observe(getViewLifecycleOwner(), this::submitSources);
+    }
+
+    private void openDriveScreen() {
+        NavHostFragment.findNavController(this).navigate(R.id.driveFragment);
     }
 
     private void submitSources(List<FolderSource> sources) {
@@ -111,4 +118,3 @@ public class FoldersFragment extends Fragment {
                 .show();
     }
 }
-

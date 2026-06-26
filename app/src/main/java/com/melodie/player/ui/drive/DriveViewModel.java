@@ -52,6 +52,10 @@ public class DriveViewModel extends ViewModel {
         repository.toggleFolderSelection(folder);
     }
 
+    public void setFolderSelections(List<DriveFolder> folders) {
+        repository.setFolderSelections(folders);
+    }
+
     public void syncSelectedFolders() {
         repository.syncSelectedFolders(() -> {
             // Sync completed
@@ -117,8 +121,8 @@ public class DriveViewModel extends ViewModel {
                             httpRequestInitializer
                     ).setApplicationName("Melodie").build();
 
+                    // Le chargement des dossiers est déclenché depuis l'observer LOGGED_IN dans le Fragment.
                     repository.setDriveService(driveService);
-                    loadDriveFolders();
                 } catch (Exception e) {
                     Log.e("DriveViewModel", "Failed to get access token", e);
                     // Fallback best effort, même si ID token ne suffit souvent pas pour Drive REST.
@@ -142,11 +146,10 @@ public class DriveViewModel extends ViewModel {
                     httpRequestInitializer
             ).setApplicationName("Melodie").build();
 
+            // Le chargement des dossiers est déclenché depuis l'observer LOGGED_IN dans le Fragment.
             repository.setDriveService(driveService);
-            loadDriveFolders();
         } else {
             Log.e("DriveViewModel", "No access token or ID token available");
         }
     }
 }
-

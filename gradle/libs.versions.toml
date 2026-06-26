@@ -28,6 +28,7 @@ navigationUiKtx = "2.9.8"
 documentfile = "1.0.1"
 splashscreen = "1.0.1"
 palette = "1.0.0"
+googleServices = "4.4.4"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -84,3 +85,4 @@ palette = { group = "androidx.palette", name = "palette", version.ref = "palette
 android-application = { id = "com.android.application", version.ref = "agp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 navigation-safeargs = { id = "androidx.navigation.safeargs", version.ref = "navigation" }
+gms-google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }

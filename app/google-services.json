@@ -1,0 +1,38 @@
+{
+  "project_info": {
+    "project_number": "851627177657",
+    "project_id": "melodie-8e9f2",
+    "storage_bucket": "melodie-8e9f2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:851627177657:android:3e8e9b2e5c3e4c02538d68",
+        "android_client_info": {
+          "package_name": "com.melodie.player"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "851627177657-6u4tb670e3f8la9uvapp2dns5l7tajbu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.melodie.player",
+            "certificate_hash": "d0fa9290b64b7d4514d777a6d94b23964ad818ac"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCN3E7lOlyfXeMbIiParv5N57HJkp9jG6w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

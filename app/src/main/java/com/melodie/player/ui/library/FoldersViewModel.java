@@ -4,8 +4,10 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MediatorLiveData;
 import androidx.lifecycle.ViewModel;
 
+import com.melodie.player.data.entity.DriveFolder;
 import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Song;
+import com.melodie.player.data.repository.DriveRepository;
 import com.melodie.player.data.repository.MusicRepository;
 
 import java.util.ArrayList;
@@ -21,14 +23,16 @@ public class FoldersViewModel extends ViewModel {
     private static final long LOCAL_SOURCE_ID = 0L;
 
     private final MusicRepository repository;
+    private final DriveRepository driveRepository;
     private final MediatorLiveData<List<FolderSource>> folderSources = new MediatorLiveData<>();
 
     private List<FolderSource> persistedSources = new ArrayList<>();
     private boolean hasLocalSongs;
 
     @Inject
-    public FoldersViewModel(MusicRepository repository) {
+    public FoldersViewModel(MusicRepository repository, DriveRepository driveRepository) {
         this.repository = repository;
+        this.driveRepository = driveRepository;
 
         folderSources.setValue(new ArrayList<>());
 
@@ -49,6 +53,27 @@ public class FoldersViewModel extends ViewModel {
 
     public void addFolderSource(String displayName, String treeUri) {
         repository.addFolderSource(displayName, treeUri);
+    }
+
+    public void addSelectedDriveFoldersAsSources(List<DriveFolder> folders) {
+        if (folders == null || folders.isEmpty()) return;
+        for (DriveFolder folder : folders) {
+            if (folder != null && folder.selected && folder.driveId != null && !folder.driveId.trim().isEmpty()) {
+                repository.addDriveFolderSource(folder.name, folder.driveId);
+            }
+        }
+    }
+
+    public LiveData<List<DriveFolder>> getDriveFolders() {
+        return driveRepository.observeDriveFolders();
+    }
+
+    public boolean isDriveLoggedIn() {
+        return driveRepository.isLoggedIn();
+    }
+
+    public void loadDriveFolders() {
+        driveRepository.listFoldersFromDrive(null);
     }
 
     public void toggleFolderSourceEnabled(FolderSource source) {

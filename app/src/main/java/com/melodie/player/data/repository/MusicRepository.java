@@ -39,6 +39,7 @@ public class MusicRepository {
     private static final String PREFS_NAME = "melodie_prefs";
     private static final String PREF_ONLINE_COVERS = "online_covers_enabled";
     private static final String NO_REMOTE_COVER = "__NO_REMOTE_COVER__";
+    private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
 
     private final Context context;
     private final SongDao songDao;
@@ -184,14 +185,43 @@ public class MusicRepository {
         });
     }
 
+    public void addDriveFolderSource(String displayName, String driveFolderId) {
+        if (driveFolderId == null || driveFolderId.trim().isEmpty()) return;
+        executor.execute(() -> {
+            String normalizedId = driveFolderId.trim();
+            String driveTreeUri = DRIVE_SOURCE_PREFIX + normalizedId;
+
+            FolderSource existing = folderSourceDao.getByTreeUri(driveTreeUri);
+            if (existing != null) {
+                existing.displayName = displayName != null && !displayName.trim().isEmpty()
+                        ? displayName.trim()
+                        : existing.displayName;
+                existing.enabled = true;
+                folderSourceDao.update(existing);
+                return;
+            }
+
+            FolderSource source = new FolderSource();
+            source.displayName = displayName != null && !displayName.trim().isEmpty()
+                    ? displayName.trim()
+                    : "Google Drive";
+            source.treeUri = driveTreeUri;
+            source.enabled = true;
+            source.createdAt = System.currentTimeMillis();
+            folderSourceDao.insert(source);
+        });
+    }
+
     public void toggleFolderSourceEnabled(FolderSource source) {
         if (source == null) return;
         executor.execute(() -> {
             source.enabled = !source.enabled;
             folderSourceDao.update(source);
-            // Rescan pour refléter le changement d'état (activation / désactivation).
-            // On supprime aussi les chansons orphelines des sources désactivées.
-            performFullScan();
+            if (shouldRescanLocalLibrary(source)) {
+                // Rescan pour refléter le changement d'état (activation / désactivation).
+                // On supprime aussi les chansons orphelines des sources désactivées.
+                performFullScan();
+            }
         });
     }
 
@@ -200,8 +230,10 @@ public class MusicRepository {
         executor.execute(() -> {
             source.enabled = enabled;
             folderSourceDao.update(source);
-            // Rescan pour refléter le changement d'état.
-            performFullScan();
+            if (shouldRescanLocalLibrary(source)) {
+                // Rescan pour refléter le changement d'état.
+                performFullScan();
+            }
         });
     }
 
@@ -209,8 +241,10 @@ public class MusicRepository {
         if (source == null) return;
         executor.execute(() -> {
             folderSourceDao.deleteById(source.id);
-            // Rescan pour supprimer les chansons issues de ce dossier de la bibliothèque.
-            performFullScan();
+            if (shouldRescanLocalLibrary(source)) {
+                // Rescan pour supprimer les chansons issues de ce dossier de la bibliothèque.
+                performFullScan();
+            }
         });
     }
 
@@ -383,6 +417,14 @@ public class MusicRepository {
          } catch (Exception ignored) {
              return null;
          }
+     }
+
+     private boolean shouldRescanLocalLibrary(FolderSource source) {
+         return source != null && !isDriveTreeUri(source.treeUri);
+     }
+
+     private boolean isDriveTreeUri(String treeUri) {
+         return treeUri != null && treeUri.startsWith(DRIVE_SOURCE_PREFIX);
      }
 }
 
