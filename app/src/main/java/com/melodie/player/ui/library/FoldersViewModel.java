@@ -57,9 +57,26 @@ public class FoldersViewModel extends ViewModel {
 
     public void addSelectedDriveFoldersAsSources(List<DriveFolder> folders) {
         if (folders == null || folders.isEmpty()) return;
+
+        // Filtre pour ne garder que les dossiers racine (dont le parent n'est pas sélectionné)
+        // Les enfants seront synchronisés automatiquement via la logique de récursion
+        // mais ne créeront pas de sources distinctes dans l'UI
+        java.util.Set<String> selectedDriveIds = new java.util.HashSet<>();
+        for (DriveFolder f : folders) {
+            if (f != null && f.selected && f.driveId != null && !f.driveId.trim().isEmpty()) {
+                selectedDriveIds.add(f.driveId);
+            }
+        }
+
         for (DriveFolder folder : folders) {
             if (folder != null && folder.selected && folder.driveId != null && !folder.driveId.trim().isEmpty()) {
-                repository.addDriveFolderSource(folder.name, folder.driveId);
+                // Ajouter seulement si le parent n'est pas dans la liste des sélectionnés
+                boolean isRootSelection = folder.parentDriveId == null
+                        || folder.parentDriveId.trim().isEmpty()
+                        || !selectedDriveIds.contains(folder.parentDriveId);
+                if (isRootSelection) {
+                    repository.addDriveFolderSource(folder.name, folder.driveId);
+                }
             }
         }
     }

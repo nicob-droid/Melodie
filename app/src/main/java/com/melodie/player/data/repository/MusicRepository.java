@@ -303,11 +303,16 @@ public class MusicRepository {
                  if (!isOnlineCoverEnabled()) return;
                   String currentCover = album.cover != null ? album.cover.trim() : "";
                   String currentReleaseDate = album.releaseDate != null ? album.releaseDate.trim() : "";
-                  boolean needsCoverLookup = force || currentCover.isEmpty();
+                  
+                  // Si la pochette est déjà une URI locale (content:// ou file://), ne pas chercher en ligne
+                  boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
+                  // Chercher une pochette en ligne seulement si pas de pochette locale ET (force OR vide)
+                  boolean needsCoverLookup = !hasLocalCover && (force || currentCover.isEmpty());
+
                   boolean needsReleaseDateLookup = currentReleaseDate.isEmpty();
                   if (!needsCoverLookup && !needsReleaseDateLookup) {
                      return;
-                 }
+                  }
 
                   if (needsCoverLookup) {
                       String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
@@ -339,36 +344,40 @@ public class MusicRepository {
          prefs.edit().putBoolean(PREF_ONLINE_COVERS, enabled).apply();
      }
 
-     public void resolveMissingCoversNow(Runnable onDone) {
-         executor.execute(() -> {
-             try {
-                 if (!isOnlineCoverEnabled()) return;
-                 for (Album album : albumDao.getAllSync()) {
-                      String currentCover = album.cover != null ? album.cover.trim() : "";
-                      boolean needsCoverLookup = currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover);
-                      if (needsCoverLookup) {
-                          String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
-                          if (remoteCover != null && !remoteCover.isEmpty()) {
-                              albumDao.updateCover(album.id, remoteCover);
-                          } else {
-                              // Toujours rien trouve : on (re)pose le sentinel pour eviter de
-                              // retenter a chaque affichage de la liste.
-                              albumDao.updateCover(album.id, NO_REMOTE_COVER);
-                          }
-                      }
+      public void resolveMissingCoversNow(Runnable onDone) {
+          executor.execute(() -> {
+              try {
+                  if (!isOnlineCoverEnabled()) return;
+                  for (Album album : albumDao.getAllSync()) {
+                       String currentCover = album.cover != null ? album.cover.trim() : "";
+                       
+                       // Si la pochette est déjà une URI locale, ne pas chercher en ligne
+                       boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
+                       
+                       boolean needsCoverLookup = !hasLocalCover && (currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover));
+                       if (needsCoverLookup) {
+                           String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
+                           if (remoteCover != null && !remoteCover.isEmpty()) {
+                               albumDao.updateCover(album.id, remoteCover);
+                           } else {
+                               // Toujours rien trouve : on (re)pose le sentinel pour eviter de
+                               // retenter a chaque affichage de la liste.
+                               albumDao.updateCover(album.id, NO_REMOTE_COVER);
+                           }
+                       }
 
-                      if (album.releaseDate == null || album.releaseDate.trim().isEmpty()) {
-                          String remoteReleaseDate = coverArtFetcher.fetchAlbumReleaseDate(album.artist, album.name);
-                          if (remoteReleaseDate != null && !remoteReleaseDate.trim().isEmpty()) {
-                              albumDao.updateReleaseDate(album.id, remoteReleaseDate.trim());
-                          }
-                      }
-                 }
-             } finally {
-                 if (onDone != null) onDone.run();
-             }
-         });
-     }
+                       if (album.releaseDate == null || album.releaseDate.trim().isEmpty()) {
+                           String remoteReleaseDate = coverArtFetcher.fetchAlbumReleaseDate(album.artist, album.name);
+                           if (remoteReleaseDate != null && !remoteReleaseDate.trim().isEmpty()) {
+                               albumDao.updateReleaseDate(album.id, remoteReleaseDate.trim());
+                           }
+                       }
+                  }
+              } finally {
+                  if (onDone != null) onDone.run();
+              }
+          });
+      }
 
      /**
       * Effectue un scan complet du MediaStore LOCAL :

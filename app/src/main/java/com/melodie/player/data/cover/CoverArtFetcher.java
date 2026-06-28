@@ -18,6 +18,8 @@ import java.text.Normalizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import java.util.concurrent.Semaphore;
+
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
@@ -27,9 +29,13 @@ public class CoverArtFetcher {
     private static final String TAG = "CoverArtFetcher";
     private static final String DISCOGS_USER_AGENT = "MelodiePlayer/1.0";
     private static final Pattern YEAR_PATTERN = Pattern.compile("(\\d{4})");
-    private static final int MAX_HTTP_429_RETRIES = 2;
-    private static final long DEFAULT_429_RETRY_MS = 1500L;
+    private static final int MAX_HTTP_429_RETRIES = 1;
+    private static final long DEFAULT_429_RETRY_MS = 2000L;
+    private static final long MIN_DISCOGS_REQUEST_DELAY_MS = 1000L;
     private static volatile long discogsRetryNotBeforeMs = 0L;
+    private static volatile long lastDiscogsRequestMs = 0L;
+    // Sérialie les appels Discogs : 1 seul thread à la fois pour éviter les 429 en cascade
+    private static final Semaphore discogsRequestSemaphore = new Semaphore(1, true);
 
     @Inject
     public CoverArtFetcher() {
@@ -43,12 +49,9 @@ public class CoverArtFetcher {
         }
 
         Log.d(TAG, "Lookup start artist='" + safeArtist + "' album='" + safeAlbum + "'");
-        String discogs = fetchFromDiscogs(safeArtist, safeAlbum);
-        if (discogs != null) {
-            Log.d(TAG, "Lookup success provider=discogs url=" + discogs);
-            return discogs;
-        }
 
+        // Discogs is disabled due to frequent 429 rate limit errors
+        // Using Deezer and iTunes as primary sources instead
         String deezer = fetchFromDeezer(safeArtist, safeAlbum);
         if (deezer != null) {
             Log.d(TAG, "Lookup success provider=deezer url=" + deezer);
@@ -80,45 +83,21 @@ public class CoverArtFetcher {
             return null;
         }
 
-        String discogs = fetchReleaseDateFromDiscogs(safeArtist, safeAlbum);
-        if (discogs != null && !discogs.trim().isEmpty()) {
-            return discogs;
-        }
-
+        // Discogs is disabled due to frequent 429 rate limit errors
+        // Using Deezer as primary source for release dates
         return fetchReleaseDateFromDeezer(safeArtist, safeAlbum);
     }
 
     public List<Long> fetchDiscogsTrackDurations(String artist, String album) {
-        List<DiscogsTrackInfo> trackInfos = fetchDiscogsTrackInfos(artist, album);
-        if (trackInfos == null || trackInfos.isEmpty()) return null;
-        List<Long> durations = new ArrayList<>();
-        for (DiscogsTrackInfo info : trackInfos) {
-            durations.add(info != null ? info.durationMs : 0L);
-        }
-        return durations;
+        // Discogs is disabled due to frequent 429 rate limit errors
+        Log.d(TAG, "Discogs track duration lookup disabled");
+        return null;
     }
 
     public List<DiscogsTrackInfo> fetchDiscogsTrackInfos(String artist, String album) {
-        String term = buildSearchTerm(artist, album);
-        if (term.isEmpty()) return null;
-
-        String endpoint = "https://api.discogs.com/database/search?type=release&per_page=50&q="
-                + Uri.encode(term);
-        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
-        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
-        Log.d(TAG, "Discogs duration request term='" + term + "' token=" + (token.isEmpty() ? "none" : "configured"));
-
-        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
-             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            Long releaseId = parseBestDiscogsReleaseId(reader, artist, album, 90);
-            if (releaseId == null) {
-                return null;
-            }
-            return fetchDiscogsTrackInfosForRelease(releaseId.longValue());
-        } catch (Exception e) {
-            Log.d(TAG, "Discogs duration lookup failed for " + term, e);
-            return null;
-        }
+        // Discogs is disabled due to frequent 429 rate limit errors
+        Log.d(TAG, "Discogs track info lookup disabled");
+        return null;
     }
 
     private String fetchFromDeezer(String artist, String album) {
@@ -307,6 +286,16 @@ public class CoverArtFetcher {
     private InputStream openJsonStream(String endpoint, String userAgent, String authorization) throws Exception {
         boolean isDiscogs = endpoint != null && endpoint.contains("api.discogs.com");
 
+        if (isDiscogs) {
+            // Un seul thread Discogs à la fois : évite le hammering et les 429 en cascade
+            try {
+                discogsRequestSemaphore.acquire();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted before Discogs request");
+            }
+        }
+        try {
         for (int attempt = 0; attempt <= MAX_HTTP_429_RETRIES; attempt++) {
             if (isDiscogs) {
                 awaitDiscogsCooldown();
@@ -365,6 +354,11 @@ public class CoverArtFetcher {
         }
 
         throw new IllegalStateException("HTTP 429");
+        } finally {
+            if (isDiscogs) {
+                discogsRequestSemaphore.release();
+            }
+        }
     }
 
     private long resolveRetryDelayMs(HttpURLConnection connection, int attempt) {
@@ -403,10 +397,20 @@ public class CoverArtFetcher {
     }
 
     private void awaitDiscogsCooldown() {
+        // Attendre d'abord le cooldown en cas de 429
         long waitMs = discogsRetryNotBeforeMs - System.currentTimeMillis();
         if (waitMs > 0L) {
             sleepQuietly(waitMs);
         }
+        
+        // Puis ajouter un délai minimum entre les requêtes pour éviter le rate limiting
+        long timeSinceLastRequest = System.currentTimeMillis() - lastDiscogsRequestMs;
+        long delayNeeded = MIN_DISCOGS_REQUEST_DELAY_MS - timeSinceLastRequest;
+        if (delayNeeded > 0L) {
+            sleepQuietly(delayNeeded);
+        }
+        
+        lastDiscogsRequestMs = System.currentTimeMillis();
     }
 
     private void sleepQuietly(long delayMs) {

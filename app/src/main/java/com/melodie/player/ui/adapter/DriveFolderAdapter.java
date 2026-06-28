@@ -189,26 +189,30 @@ public class DriveFolderAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
 
     /**
      * Appelé depuis le ViewHolder quand une checkbox change d'état.
-     * Met à jour le dossier + tous ses descendants, puis rafraîchit la liste.
+     * Marque aussi tous les descendants pour permettre la synchronisation complète.
      */
     private void onCheckboxChanged(String driveId, boolean checked) {
         List<DriveFolder> affected = new ArrayList<>();
-        collectWithDescendants(driveId, checked, affected);
+        DriveFolder folder = allFoldersById.get(driveId);
+        if (folder != null) {
+            folder.selected = checked;
+            collectWithDescendants(folder, affected);
+        }
         listener.onFoldersSelected(affected);
-        // Rafraîchit les checkboxes visibles des sous-dossiers déjà affichés
+        // Rafraîchit les checkboxes visibles
         notifyDataSetChanged();
     }
 
-    /** Collecte récursivement le dossier + tous ses descendants et met à jour leur état sélectionné */
-    private void collectWithDescendants(String driveId, boolean checked, List<DriveFolder> result) {
-        DriveFolder folder = allFoldersById.get(driveId);
-        if (folder == null) return;
-        folder.selected = checked;
-        result.add(folder);
-        List<DriveFolder> children = childrenByParentId.get(driveId);
+    /**
+     * Collecte un dossier et tous ses descendants et les marque avec le même état de sélection.
+     */
+    private void collectWithDescendants(DriveFolder parent, List<DriveFolder> output) {
+        output.add(parent);
+        List<DriveFolder> children = childrenByParentId.get(parent.driveId);
         if (children != null) {
             for (DriveFolder child : children) {
-                collectWithDescendants(child.driveId, checked, result);
+                child.selected = parent.selected;
+                collectWithDescendants(child, output);
             }
         }
     }
