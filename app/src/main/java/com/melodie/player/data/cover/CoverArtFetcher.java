@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.text.Normalizer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -24,6 +26,10 @@ public class CoverArtFetcher {
 
     private static final String TAG = "CoverArtFetcher";
     private static final String DISCOGS_USER_AGENT = "MelodiePlayer/1.0";
+    private static final Pattern YEAR_PATTERN = Pattern.compile("(\\d{4})");
+    private static final int MAX_HTTP_429_RETRIES = 2;
+    private static final long DEFAULT_429_RETRY_MS = 1500L;
+    private static volatile long discogsRetryNotBeforeMs = 0L;
 
     @Inject
     public CoverArtFetcher() {
@@ -67,6 +73,21 @@ public class CoverArtFetcher {
         return null;
     }
 
+    public String fetchAlbumReleaseDate(String artist, String album) {
+        String safeArtist = artist != null ? artist.trim() : "";
+        String safeAlbum = album != null ? album.trim() : "";
+        if (safeArtist.isEmpty() && safeAlbum.isEmpty()) {
+            return null;
+        }
+
+        String discogs = fetchReleaseDateFromDiscogs(safeArtist, safeAlbum);
+        if (discogs != null && !discogs.trim().isEmpty()) {
+            return discogs;
+        }
+
+        return fetchReleaseDateFromDeezer(safeArtist, safeAlbum);
+    }
+
     public List<Long> fetchDiscogsTrackDurations(String artist, String album) {
         List<DiscogsTrackInfo> trackInfos = fetchDiscogsTrackInfos(artist, album);
         if (trackInfos == null || trackInfos.isEmpty()) return null;
@@ -89,7 +110,7 @@ public class CoverArtFetcher {
 
         try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            Long releaseId = parseBestDiscogsReleaseId(reader, artist, album);
+            Long releaseId = parseBestDiscogsReleaseId(reader, artist, album, 90);
             if (releaseId == null) {
                 return null;
             }
@@ -110,6 +131,67 @@ public class CoverArtFetcher {
             return parseBestArtworkFromDeezer(reader, artist, album);
         } catch (Exception e) {
             Log.d(TAG, "Deezer cover lookup failed for " + query, e);
+            return null;
+        }
+    }
+
+    private String fetchReleaseDateFromDiscogs(String artist, String album) {
+        String term = buildSearchTerm(artist, album);
+        if (term.isEmpty()) return null;
+
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        List<String> dateEndpoints = new ArrayList<>();
+        addUniqueEndpoints(dateEndpoints, buildDiscogsSearchEndpoints(artist, normalizedAlbum));
+        if (!normalize(normalizedAlbum).equals(normalize(album))) {
+            addUniqueEndpoints(dateEndpoints, buildDiscogsSearchEndpoints(artist, album));
+        }
+
+        for (String endpoint : dateEndpoints) {
+            try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+                 JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                DiscogsMatch match = parseBestDiscogsMatch(reader, artist, normalizedAlbum, 58);
+                if (match == null) {
+                    continue;
+                }
+
+                if (match.masterId > 0L) {
+                    String fromMaster = fetchDiscogsYearForMaster(match.masterId);
+                    if (fromMaster != null && !fromMaster.trim().isEmpty()) {
+                        return fromMaster;
+                    }
+                }
+
+                if (match.releaseId > 0L) {
+                    String fromRelease = fetchDiscogsReleaseDateForRelease(match.releaseId);
+                    if (fromRelease != null && !fromRelease.trim().isEmpty()) {
+                        return fromRelease;
+                    }
+                }
+
+                String fromSearchYear = normalizeReleaseDate(match.year);
+                if (fromSearchYear != null) return fromSearchYear;
+            } catch (Exception e) {
+                Log.d(TAG, "Discogs release date lookup failed for endpoint=" + endpoint, e);
+            }
+        }
+
+        return null;
+    }
+
+    private String fetchReleaseDateFromDeezer(String artist, String album) {
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        String query = buildDeezerQuery(artist, normalizedAlbum);
+        if (query.isEmpty()) return null;
+
+        String endpoint = "https://api.deezer.com/search/album?q=" + Uri.encode(query);
+        try (InputStream input = openJsonStream(endpoint);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseBestReleaseDateFromDeezer(reader, artist, album);
+        } catch (Exception e) {
+            Log.d(TAG, "Deezer release date lookup failed for " + query, e);
             return null;
         }
     }
@@ -145,23 +227,77 @@ public class CoverArtFetcher {
         String term = buildSearchTerm(artist, album);
         if (term.isEmpty()) return null;
 
-        String endpoint = "https://api.discogs.com/database/search?type=release&per_page=50&q="
-                + Uri.encode(term);
         String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
         String authorization = token.isEmpty() ? null : "Discogs token=" + token;
-        Log.d(TAG, "Discogs request term='" + term + "' token=" + (token.isEmpty() ? "none" : "configured"));
+        for (String endpoint : buildDiscogsSearchEndpoints(artist, album)) {
+            Log.d(TAG, "Discogs request endpoint='" + endpoint + "' token=" + (token.isEmpty() ? "none" : "configured"));
+            try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+                 JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                DiscogsMatch match = parseBestDiscogsMatch(reader, artist, album, 90);
+                if (match == null) {
+                    continue;
+                }
 
-        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
-             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            String cover = parseBestArtworkFromDiscogs(reader, artist, album);
-            if (cover == null) {
-                Log.d(TAG, "Discogs parsed but no matching cover for term='" + term + "'");
+                if (match.releaseId > 0L) {
+                    String detailedCover = fetchDiscogsCoverForRelease(match.releaseId);
+                    if (detailedCover != null && !detailedCover.trim().isEmpty()) {
+                        return detailedCover;
+                    }
+                }
+
+                if (match.coverImage != null && !match.coverImage.trim().isEmpty()) {
+                    return match.coverImage;
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "Discogs cover lookup failed for endpoint=" + endpoint, e);
             }
-            return cover;
-        } catch (Exception e) {
-            Log.d(TAG, "Discogs cover lookup failed for " + term, e);
-            return null;
         }
+
+        Log.d(TAG, "Discogs parsed but no matching cover for term='" + term + "'");
+        return null;
+    }
+
+    private List<String> buildDiscogsSearchEndpoints(String artist, String album) {
+        List<String> endpoints = new ArrayList<>();
+        String safeArtist = artist != null ? artist.trim() : "";
+        String safeAlbum = album != null ? album.trim() : "";
+
+        if (!safeArtist.isEmpty() && !safeAlbum.isEmpty()) {
+            endpoints.add("https://api.discogs.com/database/search?type=release&per_page=50&artist="
+                    + Uri.encode(safeArtist)
+                    + "&release_title="
+                    + Uri.encode(safeAlbum)
+                    + "&format=Album");
+        }
+
+        String term = buildSearchTerm(safeArtist, safeAlbum);
+        if (!term.isEmpty()) {
+            endpoints.add("https://api.discogs.com/database/search?type=release&per_page=50&q=" + Uri.encode(term));
+        }
+
+        return endpoints;
+    }
+
+    private void addUniqueEndpoints(List<String> target, List<String> candidates) {
+        if (target == null || candidates == null) return;
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.trim().isEmpty()) continue;
+            if (!target.contains(candidate)) {
+                target.add(candidate);
+            }
+        }
+    }
+
+    private String normalizeAlbumForDateLookup(String album) {
+        String safeAlbum = album != null ? album.trim() : "";
+        if (safeAlbum.isEmpty()) return "";
+
+        String normalized = safeAlbum;
+        normalized = normalized.replaceAll("(?i)\\s*[\\[(][^\\])]*(edition|bonus|tracks?|japan|japanese|deluxe|remaster(?:ed)?|anniversary)[^\\])]*[\\])]\\s*$", "");
+        normalized = normalized.replaceAll("(?i)\\s*-\\s*(japan(?:ese)?\\s+)?(edition|deluxe(?:\\s+edition)?|bonus\\s+tracks?|remaster(?:ed)?|anniversary\\s+edition)\\s*$", "");
+        normalized = normalized.replaceAll("\\s{2,}", " ").trim();
+
+        return normalized.isEmpty() ? safeAlbum : normalized;
     }
 
     private InputStream openJsonStream(String endpoint) throws Exception {
@@ -169,40 +305,115 @@ public class CoverArtFetcher {
     }
 
     private InputStream openJsonStream(String endpoint, String userAgent, String authorization) throws Exception {
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(endpoint);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(5000);
-            connection.setRequestMethod("GET");
-            connection.setRequestProperty("Accept", "application/json");
-            if (userAgent != null && !userAgent.trim().isEmpty()) {
-                connection.setRequestProperty("User-Agent", userAgent);
-            }
-            if (authorization != null && !authorization.trim().isEmpty()) {
-                connection.setRequestProperty("Authorization", authorization);
+        boolean isDiscogs = endpoint != null && endpoint.contains("api.discogs.com");
+
+        for (int attempt = 0; attempt <= MAX_HTTP_429_RETRIES; attempt++) {
+            if (isDiscogs) {
+                awaitDiscogsCooldown();
             }
 
-            int code = connection.getResponseCode();
-            if (code < 200 || code >= 300) {
-                throw new IllegalStateException("HTTP " + code);
-            }
-
-            InputStream stream = connection.getInputStream();
-            HttpURLConnection finalConnection = connection;
-            return new java.io.FilterInputStream(stream) {
-                @Override
-                public void close() throws java.io.IOException {
-                    super.close();
-                    finalConnection.disconnect();
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL(endpoint);
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
+                connection.setRequestMethod("GET");
+                connection.setRequestProperty("Accept", "application/json");
+                if (userAgent != null && !userAgent.trim().isEmpty()) {
+                    connection.setRequestProperty("User-Agent", userAgent);
                 }
-            };
-        } catch (Exception e) {
-            if (connection != null) {
-                connection.disconnect();
+                if (authorization != null && !authorization.trim().isEmpty()) {
+                    connection.setRequestProperty("Authorization", authorization);
+                }
+
+                int code = connection.getResponseCode();
+                if (code == 429) {
+                    long retryDelayMs = resolveRetryDelayMs(connection, attempt);
+                    connection.disconnect();
+                    if (isDiscogs) {
+                        registerDiscogsCooldown(retryDelayMs);
+                    }
+                    if (attempt < MAX_HTTP_429_RETRIES) {
+                        Log.d(TAG, "HTTP 429 for endpoint=" + endpoint + ", retry in " + retryDelayMs + "ms");
+                        sleepQuietly(retryDelayMs);
+                        continue;
+                    }
+                    throw new IllegalStateException("HTTP 429");
+                }
+
+                if (code < 200 || code >= 300) {
+                    connection.disconnect();
+                    throw new IllegalStateException("HTTP " + code);
+                }
+
+                InputStream stream = connection.getInputStream();
+                HttpURLConnection finalConnection = connection;
+                return new java.io.FilterInputStream(stream) {
+                    @Override
+                    public void close() throws java.io.IOException {
+                        super.close();
+                        finalConnection.disconnect();
+                    }
+                };
+            } catch (Exception e) {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+                throw e;
             }
-            throw e;
+        }
+
+        throw new IllegalStateException("HTTP 429");
+    }
+
+    private long resolveRetryDelayMs(HttpURLConnection connection, int attempt) {
+        String retryAfter = connection != null ? connection.getHeaderField("Retry-After") : null;
+        long parsedMs = parseRetryAfterMs(retryAfter);
+        if (parsedMs > 0L) return parsedMs;
+        return fallbackRetryDelayMs(attempt);
+    }
+
+    private long parseRetryAfterMs(String retryAfter) {
+        if (retryAfter == null) return -1L;
+        String trimmed = retryAfter.trim();
+        if (trimmed.isEmpty()) return -1L;
+        try {
+            long seconds = Long.parseLong(trimmed);
+            if (seconds <= 0L) return -1L;
+            return Math.min(30000L, seconds * 1000L);
+        } catch (Exception ignored) {
+            return -1L;
+        }
+    }
+
+    private long fallbackRetryDelayMs(int attempt) {
+        long delay = DEFAULT_429_RETRY_MS * (1L << Math.max(0, attempt));
+        return Math.min(10000L, delay);
+    }
+
+    private void registerDiscogsCooldown(long delayMs) {
+        long safeDelay = Math.max(500L, delayMs);
+        long nextAllowed = System.currentTimeMillis() + safeDelay;
+        synchronized (CoverArtFetcher.class) {
+            if (nextAllowed > discogsRetryNotBeforeMs) {
+                discogsRetryNotBeforeMs = nextAllowed;
+            }
+        }
+    }
+
+    private void awaitDiscogsCooldown() {
+        long waitMs = discogsRetryNotBeforeMs - System.currentTimeMillis();
+        if (waitMs > 0L) {
+            sleepQuietly(waitMs);
+        }
+    }
+
+    private void sleepQuietly(long delayMs) {
+        try {
+            Thread.sleep(Math.max(0L, delayMs));
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -265,7 +476,75 @@ public class CoverArtFetcher {
         return bestArtwork;
     }
 
+    private String parseBestReleaseDateFromDiscogs(JsonReader reader, String expectedArtist,
+                                                   String expectedAlbum) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        String bestReleaseDate = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("results".equals(name)) {
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    String title = "";
+                    String yearText = null;
+
+                    reader.beginObject();
+                    while (reader.hasNext()) {
+                        String child = reader.nextName();
+                        if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                            title = reader.nextString();
+                        } else if ("year".equals(child) && reader.peek() != JsonToken.NULL) {
+                            if (reader.peek() == JsonToken.NUMBER) {
+                                yearText = String.valueOf(reader.nextInt());
+                            } else if (reader.peek() == JsonToken.STRING) {
+                                yearText = reader.nextString();
+                            } else {
+                                reader.skipValue();
+                            }
+                        } else {
+                            reader.skipValue();
+                        }
+                    }
+                    reader.endObject();
+
+                    String candidateArtist = "";
+                    String candidateAlbum = title;
+                    int separator = title.indexOf(" - ");
+                    if (separator > 0) {
+                        candidateArtist = title.substring(0, separator);
+                        candidateAlbum = title.substring(separator + 3);
+                    }
+
+                    String normalizedYear = normalizeReleaseDate(yearText);
+                    int score = scoreCandidate(wantedArtist, wantedAlbum,
+                            normalize(candidateArtist), normalize(candidateAlbum));
+                    if (normalizedYear != null && score > bestScore) {
+                        bestScore = score;
+                        bestReleaseDate = normalizedYear;
+                    }
+                }
+                reader.endArray();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        if (bestReleaseDate == null || bestScore < 70) {
+            return null;
+        }
+        return bestReleaseDate;
+    }
+
     private Long parseBestDiscogsReleaseId(JsonReader reader, String expectedArtist, String expectedAlbum) throws Exception {
+        return parseBestDiscogsReleaseId(reader, expectedArtist, expectedAlbum, 90);
+    }
+
+    private Long parseBestDiscogsReleaseId(JsonReader reader, String expectedArtist, String expectedAlbum, int minScore) throws Exception {
         String wantedArtist = normalize(expectedArtist);
         String wantedAlbum = normalize(expectedAlbum);
         Long bestReleaseId = null;
@@ -315,11 +594,95 @@ public class CoverArtFetcher {
         }
         reader.endObject();
 
-        if (bestReleaseId == null || bestScore < 90) {
-            Log.d(TAG, "Discogs duration best score below threshold score=" + bestScore + " threshold=90");
+        if (bestReleaseId == null || bestScore < minScore) {
+            Log.d(TAG, "Discogs release-id best score below threshold score=" + bestScore + " threshold=" + minScore);
             return null;
         }
         return bestReleaseId;
+    }
+
+    private DiscogsMatch parseBestDiscogsMatch(JsonReader reader, String expectedArtist,
+                                              String expectedAlbum, int minScore) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        DiscogsMatch best = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if (!"results".equals(name)) {
+                reader.skipValue();
+                continue;
+            }
+
+            reader.beginArray();
+            while (reader.hasNext()) {
+                long releaseId = -1L;
+                long masterId = -1L;
+                String title = "";
+                String year = null;
+                String coverImage = null;
+
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String child = reader.nextName();
+                    if ("id".equals(child) && reader.peek() != JsonToken.NULL) {
+                        releaseId = reader.nextLong();
+                    } else if ("master_id".equals(child) && reader.peek() != JsonToken.NULL) {
+                        if (reader.peek() == JsonToken.NUMBER) {
+                            masterId = reader.nextLong();
+                        } else if (reader.peek() == JsonToken.STRING) {
+                            try {
+                                masterId = Long.parseLong(reader.nextString());
+                            } catch (Exception ignored) {
+                                masterId = -1L;
+                            }
+                        } else {
+                            reader.skipValue();
+                        }
+                    } else if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                        title = reader.nextString();
+                    } else if ("year".equals(child) && reader.peek() != JsonToken.NULL) {
+                        if (reader.peek() == JsonToken.NUMBER) {
+                            year = String.valueOf(reader.nextInt());
+                        } else if (reader.peek() == JsonToken.STRING) {
+                            year = reader.nextString();
+                        } else {
+                            reader.skipValue();
+                        }
+                    } else if ("cover_image".equals(child) && reader.peek() != JsonToken.NULL) {
+                        coverImage = reader.nextString();
+                    } else {
+                        reader.skipValue();
+                    }
+                }
+                reader.endObject();
+
+                String candidateArtist = "";
+                String candidateAlbum = title;
+                int separator = title.indexOf(" - ");
+                if (separator > 0) {
+                    candidateArtist = title.substring(0, separator);
+                    candidateAlbum = title.substring(separator + 3);
+                }
+
+                int score = scoreCandidate(wantedArtist, wantedAlbum,
+                        normalize(candidateArtist), normalize(candidateAlbum));
+                if (releaseId > 0L && score > bestScore) {
+                    bestScore = score;
+                    best = new DiscogsMatch(releaseId, masterId, year, coverImage);
+                }
+            }
+            reader.endArray();
+        }
+        reader.endObject();
+
+        if (best == null || bestScore < minScore) {
+            Log.d(TAG, "Discogs best match below threshold score=" + bestScore + " threshold=" + minScore);
+            return null;
+        }
+        return best;
     }
 
     private List<DiscogsTrackInfo> fetchDiscogsTrackInfosForRelease(long releaseId) {
@@ -334,6 +697,150 @@ public class CoverArtFetcher {
             Log.d(TAG, "Discogs release duration lookup failed for id=" + releaseId, e);
             return null;
         }
+    }
+
+    private String fetchDiscogsReleaseDateForRelease(long releaseId) {
+        String endpoint = "https://api.discogs.com/releases/" + releaseId;
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+
+        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseReleaseDateFromDiscogsRelease(reader);
+        } catch (Exception e) {
+            Log.d(TAG, "Discogs release date detail lookup failed for id=" + releaseId, e);
+            return null;
+        }
+    }
+
+    private String fetchDiscogsCoverForRelease(long releaseId) {
+        String endpoint = "https://api.discogs.com/releases/" + releaseId;
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+
+        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseCoverFromDiscogsRelease(reader);
+        } catch (Exception e) {
+            Log.d(TAG, "Discogs cover detail lookup failed for id=" + releaseId, e);
+            return null;
+        }
+    }
+
+    private String fetchDiscogsYearForMaster(long masterId) {
+        String endpoint = "https://api.discogs.com/masters/" + masterId;
+        String token = BuildConfig.DISCOGS_TOKEN != null ? BuildConfig.DISCOGS_TOKEN.trim() : "";
+        String authorization = token.isEmpty() ? null : "Discogs token=" + token;
+
+        try (InputStream input = openJsonStream(endpoint, DISCOGS_USER_AGENT, authorization);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseYearFromDiscogsMaster(reader);
+        } catch (Exception e) {
+            Log.d(TAG, "Discogs master year lookup failed for id=" + masterId, e);
+            return null;
+        }
+    }
+
+    private String parseCoverFromDiscogsRelease(JsonReader reader) throws Exception {
+        String primary = null;
+        String first = null;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if (!"images".equals(name) || reader.peek() != JsonToken.BEGIN_ARRAY) {
+                reader.skipValue();
+                continue;
+            }
+
+            reader.beginArray();
+            while (reader.hasNext()) {
+                String type = "";
+                String uri = null;
+                String uri150 = null;
+
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String child = reader.nextName();
+                    if ("type".equals(child) && reader.peek() != JsonToken.NULL) {
+                        type = reader.nextString();
+                    } else if ("uri".equals(child) && reader.peek() != JsonToken.NULL) {
+                        uri = reader.nextString();
+                    } else if ("uri150".equals(child) && reader.peek() != JsonToken.NULL) {
+                        uri150 = reader.nextString();
+                    } else {
+                        reader.skipValue();
+                    }
+                }
+                reader.endObject();
+
+                String chosen = (uri != null && !uri.trim().isEmpty()) ? uri : uri150;
+                if (chosen != null && !chosen.trim().isEmpty()) {
+                    if (first == null) first = chosen;
+                    if ("primary".equalsIgnoreCase(type)) {
+                        primary = chosen;
+                    }
+                }
+            }
+            reader.endArray();
+        }
+        reader.endObject();
+
+        if (primary != null && !primary.trim().isEmpty()) return primary;
+        return first;
+    }
+
+    private String parseYearFromDiscogsMaster(JsonReader reader) throws Exception {
+        String year = null;
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("year".equals(name) && reader.peek() != JsonToken.NULL) {
+                if (reader.peek() == JsonToken.NUMBER) {
+                    year = String.valueOf(reader.nextInt());
+                } else if (reader.peek() == JsonToken.STRING) {
+                    year = reader.nextString();
+                } else {
+                    reader.skipValue();
+                }
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+        return normalizeReleaseDate(year);
+    }
+
+    private String parseReleaseDateFromDiscogsRelease(JsonReader reader) throws Exception {
+        String year = null;
+        String released = null;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("year".equals(name) && reader.peek() != JsonToken.NULL) {
+                if (reader.peek() == JsonToken.NUMBER) {
+                    year = String.valueOf(reader.nextInt());
+                } else if (reader.peek() == JsonToken.STRING) {
+                    year = reader.nextString();
+                } else {
+                    reader.skipValue();
+                }
+            } else if ("released".equals(name) && reader.peek() != JsonToken.NULL) {
+                if (reader.peek() == JsonToken.STRING) {
+                    released = reader.nextString();
+                } else {
+                    reader.skipValue();
+                }
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        String normalizedYear = normalizeReleaseDate(year);
+        if (normalizedYear != null) return normalizedYear;
+        return normalizeReleaseDate(released);
     }
 
     private List<DiscogsTrackInfo> parseTrackInfosFromDiscogsRelease(JsonReader reader) throws Exception {
@@ -527,23 +1034,117 @@ public class CoverArtFetcher {
         return bestArtwork;
     }
 
+    private String parseBestReleaseDateFromDeezer(JsonReader reader, String expectedArtist,
+                                                  String expectedAlbum) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        String bestReleaseDate = null;
+        int bestScore = Integer.MIN_VALUE;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("data".equals(name)) {
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    String artistName = "";
+                    String albumName = "";
+                    String releaseDate = null;
+
+                    reader.beginObject();
+                    while (reader.hasNext()) {
+                        String child = reader.nextName();
+                        if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                            albumName = reader.nextString();
+                        } else if ("release_date".equals(child) && reader.peek() != JsonToken.NULL) {
+                            releaseDate = reader.nextString();
+                        } else if ("artist".equals(child) && reader.peek() == JsonToken.BEGIN_OBJECT) {
+                            reader.beginObject();
+                            while (reader.hasNext()) {
+                                String artistField = reader.nextName();
+                                if ("name".equals(artistField) && reader.peek() != JsonToken.NULL) {
+                                    artistName = reader.nextString();
+                                } else {
+                                    reader.skipValue();
+                                }
+                            }
+                            reader.endObject();
+                        } else {
+                            reader.skipValue();
+                        }
+                    }
+                    reader.endObject();
+
+                    String normalizedDate = normalizeReleaseDate(releaseDate);
+                    int score = scoreCandidate(wantedArtist, wantedAlbum,
+                            normalize(artistName), normalize(albumName));
+                    if (normalizedDate != null && score > bestScore) {
+                        bestScore = score;
+                        bestReleaseDate = normalizedDate;
+                    }
+                }
+                reader.endArray();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        if (bestReleaseDate == null || bestScore < 70) {
+            return null;
+        }
+        return bestReleaseDate;
+    }
+
     private int scoreCandidate(String wantedArtist, String wantedAlbum,
                                String candidateArtist, String candidateAlbum) {
         int score = 0;
 
-        if (!wantedArtist.isEmpty() && !candidateArtist.isEmpty()) {
-            if (candidateArtist.equals(wantedArtist)) score += 120;
+        if (!wantedArtist.isEmpty()) {
+            if (candidateArtist.isEmpty()) score -= 90;
+            else if (candidateArtist.equals(wantedArtist)) score += 130;
             else if (candidateArtist.contains(wantedArtist) || wantedArtist.contains(candidateArtist)) score += 60;
-            else score -= 120;
+            else score -= 130;
         }
 
-        if (!wantedAlbum.isEmpty() && !candidateAlbum.isEmpty()) {
-            if (candidateAlbum.equals(wantedAlbum)) score += 120;
-            else if (candidateAlbum.contains(wantedAlbum) || wantedAlbum.contains(candidateAlbum)) score += 70;
-            else score += commonTokenScore(wantedAlbum, candidateAlbum);
+        if (!wantedAlbum.isEmpty()) {
+            if (candidateAlbum.isEmpty()) {
+                score -= 120;
+            } else if (candidateAlbum.equals(wantedAlbum)) {
+                score += 140;
+            } else if (candidateAlbum.contains(wantedAlbum) || wantedAlbum.contains(candidateAlbum)) {
+                score += 70;
+            } else {
+                int tokenScore = commonTokenScore(wantedAlbum, candidateAlbum);
+                if (tokenScore == 0) score -= 70;
+                score += tokenScore;
+            }
         }
+
+        score += editionNoisePenalty(wantedAlbum, candidateAlbum);
 
         return score;
+    }
+
+    private int editionNoisePenalty(String wantedAlbum, String candidateAlbum) {
+        if (wantedAlbum == null || wantedAlbum.isEmpty() || candidateAlbum == null || candidateAlbum.isEmpty()) {
+            return 0;
+        }
+
+        int penalty = 0;
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "deluxe", 30);
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "remaster", 25);
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "remastered", 25);
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "live", 35);
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "anniversary", 20);
+        penalty += tokenNoisePenalty(wantedAlbum, candidateAlbum, "edition", 20);
+        return -penalty;
+    }
+
+    private int tokenNoisePenalty(String wantedAlbum, String candidateAlbum, String token, int weight) {
+        boolean wantedHas = wantedAlbum.contains(token);
+        boolean candidateHas = candidateAlbum.contains(token);
+        return (!wantedHas && candidateHas) ? weight : 0;
     }
 
     private int commonTokenScore(String a, String b) {
@@ -580,6 +1181,29 @@ public class CoverArtFetcher {
         String ascii = Normalizer.normalize(lower, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "");
         return ascii.replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim();
+    }
+
+    private String normalizeReleaseDate(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) return null;
+        Matcher matcher = YEAR_PATTERN.matcher(trimmed);
+        if (!matcher.find()) return null;
+        return matcher.group(1);
+    }
+
+    private static class DiscogsMatch {
+        final long releaseId;
+        final long masterId;
+        final String year;
+        final String coverImage;
+
+        DiscogsMatch(long releaseId, long masterId, String year, String coverImage) {
+            this.releaseId = releaseId;
+            this.masterId = masterId;
+            this.year = year;
+            this.coverImage = coverImage;
+        }
     }
 
     public static class DiscogsTrackInfo {

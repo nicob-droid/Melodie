@@ -28,6 +28,9 @@ public interface AlbumDao {
     @Query("UPDATE albums SET cover = :cover WHERE id = :albumId")
     void updateCover(long albumId, String cover);
 
+    @Query("UPDATE albums SET releaseDate = :releaseDate WHERE id = :albumId")
+    void updateReleaseDate(long albumId, String releaseDate);
+
     @Query("SELECT * FROM albums WHERE cover IS NULL OR cover = '' OR cover NOT LIKE 'http%' ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC")
     List<Album> getAlbumsMissingRemoteCover();
 

@@ -83,10 +83,14 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         holder.artist.setText(artistText);
         holder.album.setText(album.name != null ? album.name : "");
 
-        String dateText = (album.releaseDate != null && !album.releaseDate.trim().isEmpty())
-                ? album.releaseDate
-                : holder.itemView.getContext().getString(R.string.release_date_unknown);
-        holder.releaseDate.setText(dateText);
+        String dateText = album.releaseDate != null ? album.releaseDate.trim() : "";
+        if (dateText.isEmpty()) {
+            holder.releaseDate.setText("");
+            holder.releaseDate.setVisibility(View.GONE);
+        } else {
+            holder.releaseDate.setText(dateText);
+            holder.releaseDate.setVisibility(View.VISIBLE);
+        }
 
         Object source = toGlideSource(album.cover);
         boolean shouldAttemptRemoteCover = shouldAttemptRemoteCover(album.cover);

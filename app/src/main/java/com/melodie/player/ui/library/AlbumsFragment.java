@@ -48,7 +48,7 @@ public class AlbumsFragment extends Fragment {
                     NavHostFragment.findNavController(AlbumsFragment.this)
                             .navigate(R.id.albumSongsFragment, args);
                 },
-                album -> vm.resolveAlbumCover(album, false)
+                album -> vm.resolveAlbumCover(album, true)
         );
         rv.setAdapter(adapter);
 
@@ -62,10 +62,13 @@ public class AlbumsFragment extends Fragment {
     private void prefetchNewCovers(LibraryViewModel vm, List<com.melodie.player.data.entity.Album> albums) {
         if (albums == null) return;
         for (com.melodie.player.data.entity.Album album : albums) {
-            if (album != null && !prefetchedAlbumIds.contains(album.id)) {
-                if (album.cover == null || album.cover.trim().isEmpty()) {
-                    vm.resolveAlbumCover(album, false);
-                }
+            if (album == null) continue;
+            boolean missingCover = album.cover == null || album.cover.trim().isEmpty();
+            boolean missingReleaseDate = album.releaseDate == null || album.releaseDate.trim().isEmpty();
+            if ((missingCover || missingReleaseDate) && !prefetchedAlbumIds.contains(album.id)) {
+                vm.resolveAlbumCover(album, false);
+            }
+            if (!missingCover && !missingReleaseDate) {
                 prefetchedAlbumIds.add(album.id);
             }
         }

@@ -99,7 +99,9 @@ public class LibraryViewModel extends ViewModel {
         if (albums == null) return;
         for (Album album : albums) {
             if (album == null) continue;
-            if (album.cover == null || album.cover.trim().isEmpty()) {
+            boolean missingCover = album.cover == null || album.cover.trim().isEmpty();
+            boolean missingReleaseDate = album.releaseDate == null || album.releaseDate.trim().isEmpty();
+            if (missingCover || missingReleaseDate) {
                 resolveAlbumCover(album, false);
             }
         }
