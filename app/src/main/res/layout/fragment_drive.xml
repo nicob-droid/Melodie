@@ -30,6 +30,16 @@
         android:layout_marginTop="16dp"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/drive_loading_hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/drive_loading_folders"
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler"
         android:layout_width="match_parent"

@@ -39,9 +39,17 @@ public class DriveFragment extends Fragment {
     private DriveViewModel viewModel;
     private DriveFolderAdapter folderAdapter;
     private ProgressBar progressBar;
+    private View loadingHintView;
+    private RecyclerView recyclerView;
     private Button syncButton;
     private Button signInButton;
     private ActivityResultLauncher<Intent> signInLauncher;
+    private boolean hasRequestedFolderRefresh;
+    private boolean waitingForFreshFolders;
+    private boolean isDriveLoading;
+    private boolean isDriveLoggedIn;
+    private boolean isDriveApiDisabled;
+    private java.util.List<DriveFolder> pendingFolders;
 
     @Nullable
     @Override
@@ -58,8 +66,9 @@ public class DriveFragment extends Fragment {
 
         signInButton = view.findViewById(R.id.btn_sign_in);
         syncButton = view.findViewById(R.id.btn_sync);
-        RecyclerView recycler = view.findViewById(R.id.recycler);
+        recyclerView = view.findViewById(R.id.recycler);
         progressBar = view.findViewById(R.id.progress_bar);
+        loadingHintView = view.findViewById(R.id.drive_loading_hint);
 
         // Setup Activity Result Launcher pour Google Sign-In
         signInLauncher = registerForActivityResult(
@@ -69,8 +78,8 @@ public class DriveFragment extends Fragment {
         // Setup RecyclerView
         folderAdapter = new DriveFolderAdapter(folders -> viewModel.setFolderSelections(folders));
 
-        recycler.setLayoutManager(new LinearLayoutManager(requireContext()));
-        recycler.setAdapter(folderAdapter);
+        recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
+        recyclerView.setAdapter(folderAdapter);
 
         // Bouton Sign In
         signInButton.setOnClickListener(v -> {
@@ -93,29 +102,59 @@ public class DriveFragment extends Fragment {
         // Observers
         viewModel.getAuthStatus().observe(getViewLifecycleOwner(), status -> {
             if ("LOGGED_IN".equals(status)) {
+                isDriveLoggedIn = true;
+                isDriveApiDisabled = false;
                 signInButton.setText("Déconnecter");
-                syncButton.setEnabled(true);
-                viewModel.loadDriveFolders();
+                if (!hasRequestedFolderRefresh) {
+                    hasRequestedFolderRefresh = true;
+                    waitingForFreshFolders = true;
+                    pendingFolders = null;
+                    // Evite d'afficher brièvement un cache potentiellement obsolète avant le refresh réseau.
+                    folderAdapter.submitFolders(null);
+                    updateLoadingPlaceholderVisibility();
+                    viewModel.loadDriveFolders();
+                }
             } else if ("DRIVE_API_DISABLED".equals(status)) {
-                syncButton.setEnabled(false);
+                isDriveApiDisabled = true;
                 Toast.makeText(requireContext(),
                         "Google Drive API n'est pas activée dans Google Cloud (drive.googleapis.com).",
                         Toast.LENGTH_LONG).show();
             } else if ("LOGGED_OUT".equals(status)) {
+                isDriveLoggedIn = false;
+                isDriveApiDisabled = false;
+                hasRequestedFolderRefresh = false;
+                waitingForFreshFolders = false;
+                isDriveLoading = false;
+                pendingFolders = null;
                 signInButton.setText(R.string.drive_sign_in);
-                syncButton.setEnabled(false);
                 folderAdapter.submitFolders(null);
+                updateLoadingPlaceholderVisibility();
             }
+            updateSyncButtonState();
         });
 
         viewModel.getIsLoading().observe(getViewLifecycleOwner(), isLoading -> {
+            isDriveLoading = isLoading;
             progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
+            if (!isLoading && waitingForFreshFolders) {
+                waitingForFreshFolders = false;
+                folderAdapter.submitFolders(pendingFolders);
+                pendingFolders = null;
+            }
+            updateLoadingPlaceholderVisibility();
+            updateSyncButtonState();
         });
 
         viewModel.getDriveFolders().observe(getViewLifecycleOwner(), folders -> {
+            if (waitingForFreshFolders || isDriveLoading) {
+                pendingFolders = folders;
+                return;
+            }
             if (folders != null) {
                 folderAdapter.submitFolders(folders);
             }
+            updateLoadingPlaceholderVisibility();
+            updateSyncButtonState();
         });
 
         // Vérifier si l'utilisateur est déjà connecté
@@ -169,6 +208,24 @@ public class DriveFragment extends Fragment {
             Log.e("DriveFragment", "Sign-in failed with code=" + code
                     + ", hasDefaultWebClientId=" + (webClientResId != 0), e);
         }
+    }
+
+    private void updateLoadingPlaceholderVisibility() {
+        if (loadingHintView == null || recyclerView == null) return;
+
+        boolean showPlaceholder = waitingForFreshFolders || isDriveLoading;
+        loadingHintView.setVisibility(showPlaceholder ? View.VISIBLE : View.GONE);
+        recyclerView.setVisibility(showPlaceholder ? View.INVISIBLE : View.VISIBLE);
+    }
+
+    private void updateSyncButtonState() {
+        if (syncButton == null) return;
+
+        boolean canSync = isDriveLoggedIn
+                && !isDriveApiDisabled
+                && !waitingForFreshFolders
+                && !isDriveLoading;
+        syncButton.setEnabled(canSync);
     }
 }
 

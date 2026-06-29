@@ -71,6 +71,7 @@
     <string name="drive_sign_in">Se connecter avec Google</string>
     <string name="drive_section_my_drive">Mon Drive</string>
     <string name="drive_section_shared">Lecteurs partagés</string>
+    <string name="drive_loading_folders">Analyse de votre Google Drive en cours...</string>
     <string name="drive_sync_and_add_sources_started">Sources Drive ajoutées. Synchronisation en cours...</string>
 
     <!-- Égaliseur -->

@@ -71,6 +71,7 @@
     <string name="drive_sign_in">Sign in with Google</string>
     <string name="drive_section_my_drive">My Drive</string>
     <string name="drive_section_shared">Shared drives</string>
+    <string name="drive_loading_folders">Checking your Google Drive folders...</string>
     <string name="drive_sync_and_add_sources_started">Drive sources added. Sync in progress...</string>
 
     <!-- Equalizer -->
