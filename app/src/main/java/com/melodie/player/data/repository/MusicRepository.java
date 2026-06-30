@@ -351,8 +351,10 @@ public class MusicRepository {
                   
                   // Si la pochette est déjà une URI locale (content:// ou file://), ne pas chercher en ligne
                   boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
-                  // Chercher une pochette en ligne seulement si pas de pochette locale ET (force OR vide)
-                  boolean needsCoverLookup = !hasLocalCover && (force || currentCover.isEmpty());
+                  // force=true est déclenché par un échec de chargement Glide (la pochette locale
+                  // content:// est cassée/absente) : dans ce cas on DOIT chercher en ligne même si
+                  // l'URI actuelle ressemble à une pochette locale.
+                  boolean needsCoverLookup = force || (!hasLocalCover && currentCover.isEmpty());
 
                   boolean needsReleaseDateLookup = currentReleaseDate.isEmpty();
                   if (!needsCoverLookup && !needsReleaseDateLookup) {
@@ -363,8 +365,10 @@ public class MusicRepository {
                       String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
                       if (remoteCover != null && !remoteCover.isEmpty()) {
                           albumDao.updateCover(album.id, remoteCover);
-                      } else if (currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover)) {
-                          // Memorise l'absence de resultat pour eviter de retenter a chaque affichage.
+                      } else if (force || currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover)) {
+                          // Aucun résultat distant : on mémorise l'absence (sentinel) pour éviter de
+                          // retenter en boucle, y compris quand la pochette locale (content://) est
+                          // cassée et a échoué côté Glide (force=true).
                           albumDao.updateCover(album.id, NO_REMOTE_COVER);
                       }
                   }
