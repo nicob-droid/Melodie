@@ -5,6 +5,8 @@ import android.app.Application;
 import androidx.hilt.work.HiltWorkerFactory;
 import androidx.work.Configuration;
 
+import com.melodie.player.data.repository.MusicRepository;
+
 import javax.inject.Inject;
 
 import dagger.hilt.android.HiltAndroidApp;
@@ -14,6 +16,16 @@ public class MelodieApp extends Application implements Configuration.Provider {
 
     @Inject
     HiltWorkerFactory workerFactory;
+
+    @Inject
+    MusicRepository musicRepository;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        // Re-tente UNE fois les pochettes précédemment marquées "introuvables".
+        musicRepository.retryMissingCoversOnStartup();
+    }
 
     @Override
     public Configuration getWorkManagerConfiguration() {

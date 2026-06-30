@@ -345,6 +345,10 @@ public class MusicRepository {
          executor.execute(() -> {
              try {
                  if (album == null) return;
+                 android.util.Log.d("CoverDebug", "resolveAlbumCover id=" + album.id
+                         + " force=" + force + " cover=" + album.cover
+                         + " release=" + album.releaseDate
+                         + " onlineEnabled=" + isOnlineCoverEnabled());
                  if (!isOnlineCoverEnabled()) return;
                   String currentCover = album.cover != null ? album.cover.trim() : "";
                   String currentReleaseDate = album.releaseDate != null ? album.releaseDate.trim() : "";
@@ -427,6 +431,23 @@ public class MusicRepository {
               }
           });
       }
+
+    /**
+     * Réinitialise les pochettes marquées "introuvables" (sentinel) afin qu'elles
+     * soient re-cherchées UNE seule fois lors du prochain affichage de la liste.
+     * À appeler une fois au démarrage de l'application.
+     */
+    public void retryMissingCoversOnStartup() {
+        executor.execute(() -> {
+            try {
+                int cleared = albumDao.clearNoRemoteCoverSentinel(NO_REMOTE_COVER);
+                android.util.Log.d("MusicRepository",
+                        "Startup retry: cleared " + cleared + " no-remote-cover sentinels");
+            } catch (Exception e) {
+                android.util.Log.w("MusicRepository", "Unable to clear cover sentinels on startup", e);
+            }
+        });
+    }
 
      /**
       * Effectue un scan complet du MediaStore LOCAL :

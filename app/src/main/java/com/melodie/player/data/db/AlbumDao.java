@@ -28,6 +28,14 @@ public interface AlbumDao {
     @Query("UPDATE albums SET cover = :cover WHERE id = :albumId")
     void updateCover(long albumId, String cover);
 
+    /**
+     * Efface le sentinel "pochette introuvable" pour permettre une nouvelle tentative
+     * de recherche distante. Met la colonne cover à NULL afin que la logique de prefetch
+     * la considère comme manquante. Retourne le nombre de lignes affectées.
+     */
+    @Query("UPDATE albums SET cover = NULL WHERE cover = :sentinel")
+    int clearNoRemoteCoverSentinel(String sentinel);
+
     @Query("UPDATE albums SET releaseDate = :releaseDate WHERE id = :albumId")
     void updateReleaseDate(long albumId, String releaseDate);
 

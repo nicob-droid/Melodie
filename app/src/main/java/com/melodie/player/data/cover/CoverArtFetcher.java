@@ -1108,7 +1108,12 @@ public class CoverArtFetcher {
             if (candidateArtist.isEmpty()) score -= 90;
             else if (candidateArtist.equals(wantedArtist)) score += 130;
             else if (candidateArtist.contains(wantedArtist) || wantedArtist.contains(candidateArtist)) score += 60;
-            else score -= 130;
+            else {
+                // Variantes type "Sean Lennon" vs "Sean Ono Lennon" : compter les tokens communs
+                int tokenScore = commonTokenScore(wantedArtist, candidateArtist);
+                if (tokenScore >= 24) score += 40;   // au moins 2 tokens significatifs communs
+                else score -= 130;
+            }
         }
 
         if (!wantedAlbum.isEmpty()) {
