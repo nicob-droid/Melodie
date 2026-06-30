@@ -10,6 +10,7 @@ import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.ResolvingDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.session.MediaSession;
@@ -39,7 +40,10 @@ public class PlaybackService extends MediaSessionService {
 
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
-                .setUserAgent("Melodie/DriveStreaming");
+                .setUserAgent("Melodie/DriveStreaming")
+                .setConnectTimeoutMs(4_000)
+                .setReadTimeoutMs(8_000)
+                .setKeepPostFor302Redirects(true);
 
         DefaultDataSource.Factory defaultDataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
         ResolvingDataSource.Factory resolvingFactory = new ResolvingDataSource.Factory(
@@ -47,8 +51,20 @@ public class PlaybackService extends MediaSessionService {
                 this::resolveDriveDataSpec
         );
 
+        // Démarre la lecture dès qu'un petit buffer est prêt (500 ms) au lieu des 2,5 s
+        // par défaut : réduit nettement le délai au lancement d'un flux Drive.
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                        /* minBufferMs= */ 15_000,
+                        /* maxBufferMs= */ 50_000,
+                        /* bufferForPlaybackMs= */ 500,
+                        /* bufferForPlaybackAfterRebufferMs= */ 1_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build();
+
         ExoPlayer player = new ExoPlayer.Builder(this)
                 .setMediaSourceFactory(new DefaultMediaSourceFactory(resolvingFactory))
+                .setLoadControl(loadControl)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
                                 .setUsage(C.USAGE_MEDIA)
