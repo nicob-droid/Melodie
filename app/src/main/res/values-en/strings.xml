@@ -25,6 +25,12 @@
     <string name="library_album_tracks_title">Album: %1$s</string>
     <string name="library_artist_tracks_title">Artist: %1$s</string>
     <string name="library_scan">Library scan</string>
+    <string name="albums_empty">No albums to display</string>
+    <string name="albums_empty_no_active_source">No active source</string>
+    <string name="songs_empty">No songs to display</string>
+    <string name="songs_empty_no_active_source">No active source</string>
+    <string name="artists_empty">No artists to display</string>
+    <string name="artists_empty_no_active_source">No active source</string>
 
     <!-- Folder sources -->
     <string name="folders_title">Used sources</string>

@@ -15,7 +15,7 @@ import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.melodie.player.R;
 import com.melodie.player.data.entity.FolderSource;
 
-public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceAdapter.ViewHolder> {
+    public class FolderSourceAdapter extends ListAdapter<FolderSource, RecyclerView.ViewHolder> {
 
     public interface OnFolderSourceActionListener {
         void onEnabledChanged(FolderSource source, boolean enabled);
@@ -25,7 +25,7 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
     private final OnFolderSourceActionListener listener;
 
     public FolderSourceAdapter(OnFolderSourceActionListener listener) {
-        super(new DiffUtil.ItemCallback<FolderSource>() {
+        super(new DiffUtil.ItemCallback<>() {
             @Override
             public boolean areItemsTheSame(@NonNull FolderSource oldItem, @NonNull FolderSource newItem) {
                 return oldItem.id == newItem.id;
@@ -43,15 +43,15 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
 
     @NonNull
     @Override
-    public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+    public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View view = LayoutInflater.from(parent.getContext())
                 .inflate(R.layout.item_folder_source, parent, false);
         return new ViewHolder(view);
     }
 
     @Override
-    public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-        holder.bind(getItem(position), listener);
+    public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+        ((ViewHolder) holder).bind(getItem(position), listener);
     }
 
     static class ViewHolder extends RecyclerView.ViewHolder {
@@ -69,14 +69,12 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
         }
 
         void bind(FolderSource source, OnFolderSourceActionListener listener) {
-            boolean isLocalSource = source.id == 0L; // Synthetic "Telephone / Music" source
-            boolean isDriveSource = source.treeUri != null && source.treeUri.startsWith("drive://folder/");
+            boolean isDriveSource = source.treeUri.startsWith("drive://folder/");
 
             title.setText(source.displayName);
             subtitle.setText(isDriveSource ? "Google Drive" : source.treeUri);
             enabledSwitch.setOnCheckedChangeListener(null);
             enabledSwitch.setChecked(source.enabled);
-            enabledSwitch.setEnabled(!isLocalSource);
             enabledSwitch.setText(source.enabled
                     ? itemView.getContext().getString(R.string.folders_source_enabled)
                     : itemView.getContext().getString(R.string.folders_source_disabled));
@@ -86,8 +84,6 @@ public class FolderSourceAdapter extends ListAdapter<FolderSource, FolderSourceA
                         : itemView.getContext().getString(R.string.folders_source_disabled));
                 listener.onEnabledChanged(source, isChecked);
             });
-            removeButton.setEnabled(!isLocalSource);
-            removeButton.setAlpha(isLocalSource ? 0.5f : 1f);
             removeButton.setOnClickListener(v -> listener.onRemoveClicked(source));
         }
     }

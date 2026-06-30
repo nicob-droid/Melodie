@@ -43,8 +43,12 @@ public class MusicRepository {
 
     private static final String PREFS_NAME = "melodie_prefs";
     private static final String PREF_ONLINE_COVERS = "online_covers_enabled";
+    private static final String PREF_LOCAL_SOURCE_SEEDED = "local_source_seeded";
+    private static final String PREF_LOCAL_SOURCE_SUPPRESSED = "local_source_suppressed";
     private static final String NO_REMOTE_COVER = "__NO_REMOTE_COVER__";
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
+    private static final String LOCAL_SOURCE_TREE_URI = "local://music";
+    private static final String LOCAL_SOURCE_DISPLAY_NAME = "Téléphone / Music";
 
     private final Context context;
     private final SongDao songDao;
@@ -71,6 +75,37 @@ public class MusicRepository {
         this.coverArtFetcher = coverArtFetcher;
         this.executor = executor;
         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        try {
+            executor.submit(() -> {
+                ensureDefaultLocalSourceSeeded();
+                return null;
+            }).get();
+        } catch (Exception e) {
+            android.util.Log.w("MusicRepository", "Unable to seed default local source", e);
+        }
+    }
+
+    private void ensureDefaultLocalSourceSeeded() {
+        try {
+            if (prefs.getBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, false)
+                    || prefs.getBoolean(PREF_LOCAL_SOURCE_SEEDED, false)) {
+                return;
+            }
+
+            FolderSource localSource = folderSourceDao.getByTreeUri(LOCAL_SOURCE_TREE_URI);
+            if (localSource == null) {
+                FolderSource source = new FolderSource();
+                source.displayName = LOCAL_SOURCE_DISPLAY_NAME;
+                source.treeUri = LOCAL_SOURCE_TREE_URI;
+                source.enabled = true;
+                source.createdAt = System.currentTimeMillis();
+                folderSourceDao.insert(source);
+            }
+            prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SEEDED, true).apply();
+        } catch (Exception e) {
+            // Si le seed échoue, on n'empêche pas l'app de démarrer ; le prochain accès réessaiera.
+            android.util.Log.w("MusicRepository", "Unable to seed default local source", e);
+        }
     }
 
     public LiveData<List<Song>> observeAllSongs() {
@@ -223,6 +258,9 @@ public class MusicRepository {
         if (source == null) return;
         executor.execute(() -> {
             source.enabled = !source.enabled;
+            if (isLocalMusicSource(source.treeUri)) {
+                prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
+            }
             folderSourceDao.update(source);
             if (shouldRescanLocalLibrary(source)) {
                 // Rescan pour refléter le changement d'état (activation / désactivation).
@@ -238,6 +276,9 @@ public class MusicRepository {
         if (source == null) return;
         executor.execute(() -> {
             source.enabled = enabled;
+            if (isLocalMusicSource(source.treeUri)) {
+                prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
+            }
             folderSourceDao.update(source);
             if (shouldRescanLocalLibrary(source)) {
                 // Rescan pour refléter le changement d'état.
@@ -251,12 +292,16 @@ public class MusicRepository {
     public void removeFolderSource(FolderSource source) {
         if (source == null) return;
         executor.execute(() -> {
+            if (isLocalMusicSource(source.treeUri)) {
+                prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
+            }
             folderSourceDao.deleteById(source.id);
             if (shouldRescanLocalLibrary(source)) {
                 // Rescan pour supprimer les chansons issues de ce dossier de la bibliothèque.
                 performFullScan();
             } else {
                 songDao.deleteDriveSongsByFolderSourceId(source.id);
+                songDao.deleteLocalSongsByFolderSourceId(source.id);
                 rebuildAlbumsFromSongs();
             }
         });
@@ -390,6 +435,7 @@ public class MusicRepository {
       * tout en préservant les pochettes déjà téléchargées.
       */
      private void performFullScan() {
+          ensureDefaultLocalSourceSeeded();
          // 2. Scan MediaStore.
          MediaStoreScanner.ScanResult result = MediaStoreScanner.scan(context, buildActiveSourceRoots());
          songDao.deleteBySource(Song.SOURCE_LOCAL);
@@ -479,16 +525,11 @@ public class MusicRepository {
      private List<MediaStoreScanner.SourceRoot> buildActiveSourceRoots() {
          List<MediaStoreScanner.SourceRoot> roots = new ArrayList<>();
 
-         String defaultMusicPath = Environment
-                 .getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-                 .getAbsolutePath();
-         if (defaultMusicPath != null && !defaultMusicPath.trim().isEmpty()) {
-             roots.add(new MediaStoreScanner.SourceRoot(0L, defaultMusicPath));
-         }
-
          for (FolderSource source : folderSourceDao.getAllSync()) {
              if (source == null || !source.enabled || source.id <= 0L) continue;
-             String absolutePath = treeUriToAbsolutePath(source.treeUri);
+              String absolutePath = isLocalMusicSource(source.treeUri)
+                      ? Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).getAbsolutePath()
+                      : treeUriToAbsolutePath(source.treeUri);
              if (absolutePath != null && !absolutePath.trim().isEmpty()) {
                  roots.add(new MediaStoreScanner.SourceRoot(source.id, absolutePath));
              }
@@ -524,12 +565,16 @@ public class MusicRepository {
      }
 
      private boolean shouldRescanLocalLibrary(FolderSource source) {
-         return source != null && !isDriveTreeUri(source.treeUri);
+          return source != null && (isLocalMusicSource(source.treeUri) || !isDriveTreeUri(source.treeUri));
      }
 
      private boolean isDriveTreeUri(String treeUri) {
          return treeUri != null && treeUri.startsWith(DRIVE_SOURCE_PREFIX);
      }
+
+      private boolean isLocalMusicSource(String treeUri) {
+          return treeUri != null && treeUri.equals(LOCAL_SOURCE_TREE_URI);
+      }
 
       private String albumSignature(String artist, String albumName) {
           String normalizedArtist = normalizeText(artist);

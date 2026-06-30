@@ -25,6 +25,12 @@
     <string name="library_album_tracks_title">Album : %1$s</string>
     <string name="library_artist_tracks_title">Artiste : %1$s</string>
     <string name="library_scan">Scanner la bibliothèque</string>
+    <string name="albums_empty">Aucun album à afficher</string>
+    <string name="albums_empty_no_active_source">Aucune source active</string>
+    <string name="songs_empty">Aucun morceau à afficher</string>
+    <string name="songs_empty_no_active_source">Aucune source active</string>
+    <string name="artists_empty">Aucun artiste à afficher</string>
+    <string name="artists_empty_no_active_source">Aucune source active</string>
 
     <!-- Sources de dossiers -->
     <string name="folders_title">Sources utilisées</string>

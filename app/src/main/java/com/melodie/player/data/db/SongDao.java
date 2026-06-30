@@ -29,6 +29,9 @@ public interface SongDao {
     @Query("DELETE FROM songs WHERE source = 'DRIVE' AND folderSourceId = :folderSourceId")
     void deleteDriveSongsByFolderSourceId(long folderSourceId);
 
+    @Query("DELETE FROM songs WHERE source = 'LOCAL' AND folderSourceId = :folderSourceId")
+    void deleteLocalSongsByFolderSourceId(long folderSourceId);
+
     @Query("DELETE FROM songs WHERE source = 'LOCAL' AND folderSourceId NOT IN (:activeFolderSourceIds)")
     void deleteLocalSongsNotInFolderSources(List<Long> activeFolderSourceIds);
 
@@ -42,7 +45,10 @@ public interface SongDao {
             + "COALESCE(albums.cover, songs.cover) AS cover, "
             + "songs.favorite AS favorite, songs.dateAdded AS dateAdded";
 
-    String VISIBLE_SONGS_FILTER = "(songs.source != 'DRIVE' OR songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1))";
+    String VISIBLE_SONGS_FILTER = "("
+            + "(songs.source = 'LOCAL' AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)) "
+            + "OR (songs.source = 'DRIVE' AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)) "
+            + ")";
 
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "

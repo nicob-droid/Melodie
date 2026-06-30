@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -26,17 +27,21 @@ import dagger.hilt.android.AndroidEntryPoint;
 public class AlbumsFragment extends Fragment {
 
     private final Set<Long> prefetchedAlbumIds = new HashSet<>();
+    private TextView emptyStateView;
+    private int lastAlbumCount;
+    private boolean hasActiveSources = true;
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_recycler, container, false);
+        return inflater.inflate(R.layout.fragment_albums, container, false);
     }
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         RecyclerView rv = view.findViewById(R.id.recycler);
+        emptyStateView = view.findViewById(R.id.albums_empty_state);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
                 .get(LibraryViewModel.class);
@@ -54,9 +59,36 @@ public class AlbumsFragment extends Fragment {
 
         vm.albums().observe(getViewLifecycleOwner(), albums -> {
             adapter.submitList(albums);
+            lastAlbumCount = albums != null ? albums.size() : 0;
+            updateEmptyState();
             // Prefetch covers only for albums we haven't prefetched yet.
             prefetchNewCovers(vm, albums);
         });
+
+        vm.folderSources().observe(getViewLifecycleOwner(), sources -> {
+            boolean active = false;
+            if (sources != null) {
+                for (com.melodie.player.data.entity.FolderSource source : sources) {
+                    if (source != null && source.enabled) {
+                        active = true;
+                        break;
+                    }
+                }
+            }
+            hasActiveSources = active;
+            updateEmptyState();
+        });
+    }
+
+    private void updateEmptyState() {
+        if (emptyStateView == null) return;
+        boolean showEmpty = lastAlbumCount == 0;
+        emptyStateView.setVisibility(showEmpty ? View.VISIBLE : View.GONE);
+        if (!showEmpty) return;
+
+        emptyStateView.setText(hasActiveSources
+                ? R.string.albums_empty
+                : R.string.albums_empty_no_active_source);
     }
 
     private void prefetchNewCovers(LibraryViewModel vm, List<com.melodie.player.data.entity.Album> albums) {

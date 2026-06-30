@@ -92,9 +92,8 @@ public class MediaStoreScanner {
                 if (matchedFolderSourceId < 0L) {
                     continue;
                 }
-                // Les audios WhatsApp ne sont acceptes que via une source explicite ajoutee par l'utilisateur.
-                // Cela evite qu'ils reapparaissent via la source locale par defaut (id=0).
-                if (isWhatsAppPath(absolutePath) && matchedFolderSourceId <= 0L) {
+                // Exclut WhatsApp du scan local principal.
+                if (isWhatsAppPath(absolutePath)) {
                     continue;
                 }
 
@@ -157,7 +156,7 @@ public class MediaStoreScanner {
     }
 
     private static long resolveFolderSourceId(String absolutePath, List<SourceRoot> roots) {
-        if (roots == null || roots.isEmpty()) return 0L;
+        if (roots == null || roots.isEmpty()) return -1L;
         String normalizedPath = normalizePath(absolutePath);
         if (normalizedPath.isEmpty()) return -1L;
 

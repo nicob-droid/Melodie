@@ -4,6 +4,7 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.ViewModel;
 
 import com.melodie.player.data.entity.Album;
+import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Playlist;
 import com.melodie.player.data.entity.Song;
 import com.melodie.player.data.model.ArtistData;
@@ -49,6 +50,10 @@ public class LibraryViewModel extends ViewModel {
 
     public LiveData<List<PlaylistSummary>> playlists() {
         return repository.observePlaylists();
+    }
+
+    public LiveData<List<FolderSource>> folderSources() {
+        return repository.observeFolderSources();
     }
 
     public LiveData<Playlist> playlist(long playlistId) {

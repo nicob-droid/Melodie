@@ -20,14 +20,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel;
 @HiltViewModel
 public class FoldersViewModel extends ViewModel {
 
-    private static final long LOCAL_SOURCE_ID = 0L;
-
     private final MusicRepository repository;
     private final DriveRepository driveRepository;
     private final MediatorLiveData<List<FolderSource>> folderSources = new MediatorLiveData<>();
 
     private List<FolderSource> persistedSources = new ArrayList<>();
-    private boolean hasLocalSongs;
 
     @Inject
     public FoldersViewModel(MusicRepository repository, DriveRepository driveRepository) {
@@ -38,11 +35,6 @@ public class FoldersViewModel extends ViewModel {
 
         folderSources.addSource(repository.observeFolderSources(), sources -> {
             persistedSources = sources != null ? sources : new ArrayList<>();
-            publishSources();
-        });
-
-        folderSources.addSource(repository.observeAllSongs(), songs -> {
-            hasLocalSongs = songs != null && !songs.isEmpty();
             publishSources();
         });
     }
@@ -106,20 +98,7 @@ public class FoldersViewModel extends ViewModel {
     }
 
     private void publishSources() {
-        List<FolderSource> result = new ArrayList<>();
-
-        if (hasLocalSongs) {
-            FolderSource local = new FolderSource();
-            local.id = LOCAL_SOURCE_ID;
-            local.displayName = "Téléphone / Music";
-            local.treeUri = "Sources locales déjà indexées";
-            local.enabled = true;
-            local.createdAt = 0L;
-            result.add(local);
-        }
-
-        result.addAll(persistedSources);
-        folderSources.postValue(result);
+        folderSources.postValue(new ArrayList<>(persistedSources));
     }
 }
 
