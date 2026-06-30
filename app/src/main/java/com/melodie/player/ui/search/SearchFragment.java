@@ -7,6 +7,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -23,6 +24,8 @@ import com.melodie.player.ui.adapter.SongAdapter;
 import com.melodie.player.ui.library.LibraryViewModel;
 import com.melodie.player.ui.library.PlaylistDialogs;
 
+import java.util.List;
+
 import javax.inject.Inject;
 
 import dagger.hilt.android.AndroidEntryPoint;
@@ -32,6 +35,12 @@ public class SearchFragment extends Fragment {
 
     @Inject
     PlayerController playerController;
+
+    private TextView emptyState;
+    private RecyclerView recycler;
+    private boolean hasActiveSources = true;
+    private boolean isQueryEmpty = true;
+    private int lastResultCount;
 
     @Nullable
     @Override
@@ -45,10 +54,12 @@ public class SearchFragment extends Fragment {
         LibraryViewModel libraryVm = new ViewModelProvider(requireParentFragment())
                 .get(LibraryViewModel.class);
 
-        RecyclerView rv = view.findViewById(R.id.recycler);
-        rv.setLayoutManager(new LinearLayoutManager(requireContext()));
+        recycler = view.findViewById(R.id.recycler);
+        recycler.setLayoutManager(new LinearLayoutManager(requireContext()));
+        emptyState = view.findViewById(R.id.empty_state);
+
         SongAdapter adapter = new SongAdapter((song, position) -> {
-            playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
+            playerController.playQueue(((SongAdapter) recycler.getAdapter()).getCurrentList(), position);
             NavHostFragment.findNavController(SearchFragment.this).navigate(R.id.playerFragment);
         }, (anchor, song, position) -> PlaylistDialogs.showAddToPlaylistDialog(
                 SearchFragment.this,
@@ -57,10 +68,22 @@ public class SearchFragment extends Fragment {
                 () -> requireActivity().runOnUiThread(() ->
                         Toast.makeText(requireContext(), R.string.playlist_track_added, Toast.LENGTH_SHORT).show())
         ));
-        rv.setAdapter(adapter);
+        recycler.setAdapter(adapter);
 
         SearchViewModel vm = new ViewModelProvider(this).get(SearchViewModel.class);
-        vm.results().observe(getViewLifecycleOwner(), adapter::submitList);
+
+        // Observe les sources actives : ne dépend pas de l'état (asynchrone) de l'adapter.
+        libraryVm.folderSources().observe(getViewLifecycleOwner(), sources -> {
+            hasActiveSources = computeHasActiveSources(sources);
+            updateEmptyState();
+        });
+
+        vm.results().observe(getViewLifecycleOwner(), results -> {
+            adapter.submitList(results);
+            lastResultCount = results != null ? results.size() : 0;
+            isQueryEmpty = vm.getLastQuery().isEmpty();
+            updateEmptyState();
+        });
 
         EditText search = view.findViewById(R.id.search_input);
         search.addTextChangedListener(new TextWatcher() {
@@ -75,6 +98,33 @@ public class SearchFragment extends Fragment {
             @Override
             public void afterTextChanged(Editable s) { }
         });
+    }
+
+    private boolean computeHasActiveSources(List<com.melodie.player.data.entity.FolderSource> sources) {
+        if (sources == null) return false;
+        for (com.melodie.player.data.entity.FolderSource source : sources) {
+            if (source != null && source.enabled) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void updateEmptyState() {
+        if (emptyState == null || recycler == null) return;
+
+        if (!hasActiveSources) {
+            emptyState.setText(R.string.search_no_active_source);
+            emptyState.setVisibility(View.VISIBLE);
+            recycler.setVisibility(View.GONE);
+        } else if (lastResultCount == 0) {
+            emptyState.setText(isQueryEmpty ? R.string.search_empty : R.string.search_no_results);
+            emptyState.setVisibility(View.VISIBLE);
+            recycler.setVisibility(View.GONE);
+        } else {
+            emptyState.setVisibility(View.GONE);
+            recycler.setVisibility(View.VISIBLE);
+        }
     }
 }
 

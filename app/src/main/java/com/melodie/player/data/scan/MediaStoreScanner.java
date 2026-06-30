@@ -3,6 +3,7 @@ package com.melodie.player.data.scan;
 import android.content.ContentUris;
 import android.content.Context;
 import android.database.Cursor;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.provider.MediaStore;
 
@@ -100,6 +101,9 @@ public class MediaStoreScanner {
                 String albumName = c.getString(albumIdx);
                 String artistName = c.getString(artistIdx);
                 String releaseYear = toReleaseYear(c.getInt(yearIdx));
+                if (releaseYear == null) {
+                    releaseYear = extractReleaseYearFromMetadata(context, trackUri, absolutePath);
+                }
                 String albumKey = buildAlbumKey(artistName, albumName);
                 long logicalAlbumId = toLogicalAlbumId(albumKey);
 
@@ -110,6 +114,7 @@ public class MediaStoreScanner {
                 s.album = albumName;
                 // Utilise un id logique stable pour regrouper les variantes MediaStore d'un meme album.
                 s.albumId = logicalAlbumId;
+                s.releaseDate = releaseYear;
                 // TRACK peut encoder disque+piste sous la forme 1XYZ (disque 1, piste XYZ).
                 // On conserve la valeur brute pour respecter l'ordre intra-disque.
                 int rawTrack = c.getInt(trackIdx);
@@ -210,6 +215,56 @@ public class MediaStoreScanner {
     private static String toReleaseYear(int year) {
         if (year <= 0) return null;
         return String.valueOf(year);
+    }
+
+    private static String extractReleaseYearFromMetadata(Context context, Uri trackUri, String absolutePath) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            if (trackUri != null) {
+                retriever.setDataSource(context, trackUri);
+            } else if (absolutePath != null && !absolutePath.trim().isEmpty()) {
+                retriever.setDataSource(absolutePath);
+            } else {
+                return null;
+            }
+
+            String year = sanitizeYear(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR));
+            if (year != null) return year;
+
+            return sanitizeYear(
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE));
+        } catch (RuntimeException ignored) {
+            return null;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+                // No-op: certains extracteurs jettent une exception à release().
+            }
+        }
+    }
+
+    private static String sanitizeYear(String rawValue) {
+        if (rawValue == null) return null;
+        String trimmed = rawValue.trim();
+        if (trimmed.length() < 4) return null;
+        for (int i = 0; i <= trimmed.length() - 4; i++) {
+            char c0 = trimmed.charAt(i);
+            char c1 = trimmed.charAt(i + 1);
+            char c2 = trimmed.charAt(i + 2);
+            char c3 = trimmed.charAt(i + 3);
+            if (Character.isDigit(c0)
+                    && Character.isDigit(c1)
+                    && Character.isDigit(c2)
+                    && Character.isDigit(c3)) {
+                int year = Integer.parseInt(trimmed.substring(i, i + 4));
+                if (year >= 1000 && year <= 2999) {
+                    return String.valueOf(year);
+                }
+            }
+        }
+        return null;
     }
 }
 

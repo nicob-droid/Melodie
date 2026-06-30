@@ -443,84 +443,91 @@ public class MusicRepository {
           rebuildAlbumsFromSongs();
      }
 
-    private void rebuildAlbumsFromSongs(Map<Long, Album> savedAlbums) {
-        Map<String, Album> savedAlbumsBySignature = new HashMap<>();
-        if (savedAlbums != null && !savedAlbums.isEmpty()) {
-            for (Album saved : savedAlbums.values()) {
-                if (saved == null) continue;
-                String signature = albumSignature(saved.artist, saved.name);
-                if (signature != null && !signature.isEmpty()) {
-                    savedAlbumsBySignature.put(signature, saved);
-                }
-            }
-        }
+     private void rebuildAlbumsFromSongs(Map<Long, Album> savedAlbums) {
+         Map<String, Album> savedAlbumsBySignature = new HashMap<>();
+         if (savedAlbums != null && !savedAlbums.isEmpty()) {
+             for (Album saved : savedAlbums.values()) {
+                 if (saved == null) continue;
+                 String signature = albumSignature(saved.artist, saved.name);
+                 if (signature != null && !signature.isEmpty()) {
+                     savedAlbumsBySignature.put(signature, saved);
+                 }
+             }
+         }
 
-        Set<Long> enabledDriveSourceIds = new HashSet<>();
-        for (FolderSource source : folderSourceDao.getAllSync()) {
-            if (source != null && source.enabled && isDriveTreeUri(source.treeUri) && source.id > 0L) {
-                enabledDriveSourceIds.add(source.id);
-            }
-        }
+         Set<Long> enabledDriveSourceIds = new HashSet<>();
+         for (FolderSource source : folderSourceDao.getAllSync()) {
+             if (source != null && source.enabled && isDriveTreeUri(source.treeUri) && source.id > 0L) {
+                 enabledDriveSourceIds.add(source.id);
+             }
+         }
 
-        Map<Long, Album> albumMap = new HashMap<>();
-        for (Song song : songDao.getAll()) {
-            if (song == null) continue;
-            if (Song.SOURCE_DRIVE.equals(song.source) && !enabledDriveSourceIds.contains(song.folderSourceId)) {
-                continue;
-            }
+         Map<Long, Album> albumMap = new HashMap<>();
+         for (Song song : songDao.getAll()) {
+             if (song == null) continue;
+             if (Song.SOURCE_DRIVE.equals(song.source) && !enabledDriveSourceIds.contains(song.folderSourceId)) {
+                 continue;
+             }
 
-            Album album = albumMap.get(song.albumId);
-            if (album == null) {
-                album = new Album();
-                album.id = song.albumId;
-                album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
-                album.artist = song.artist != null && !song.artist.trim().isEmpty() ? song.artist.trim() : null;
-                album.cover = song.cover != null && !song.cover.trim().isEmpty() ? song.cover.trim() : null;
-                album.releaseDate = null;
-                album.count = 0;
-                albumMap.put(album.id, album);
-            } else {
-                if ((album.artist == null || album.artist.trim().isEmpty())
-                        && song.artist != null && !song.artist.trim().isEmpty()) {
-                    album.artist = song.artist.trim();
-                }
-                if ((album.cover == null || album.cover.trim().isEmpty())
-                        && song.cover != null && !song.cover.trim().isEmpty()) {
-                    album.cover = song.cover.trim();
-                }
-                if (album.name == null || album.name.trim().isEmpty()) {
-                    album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
-                }
-            }
-            album.count++;
-        }
+             Album album = albumMap.get(song.albumId);
+             if (album == null) {
+                 album = new Album();
+                 album.id = song.albumId;
+                 album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
+                 album.artist = song.artist != null && !song.artist.trim().isEmpty() ? song.artist.trim() : null;
+                 album.cover = song.cover != null && !song.cover.trim().isEmpty() ? song.cover.trim() : null;
+                 album.releaseDate = song.releaseDate != null && !song.releaseDate.trim().isEmpty()
+                         ? song.releaseDate.trim()
+                         : null;
+                 album.count = 0;
+                 albumMap.put(album.id, album);
+             } else {
+                 if ((album.artist == null || album.artist.trim().isEmpty())
+                         && song.artist != null && !song.artist.trim().isEmpty()) {
+                     album.artist = song.artist.trim();
+                 }
+                 if ((album.cover == null || album.cover.trim().isEmpty())
+                         && song.cover != null && !song.cover.trim().isEmpty()) {
+                     album.cover = song.cover.trim();
+                 }
+                 if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
+                         && song.releaseDate != null && !song.releaseDate.trim().isEmpty()) {
+                     album.releaseDate = song.releaseDate.trim();
+                 }
+                 if (album.name == null || album.name.trim().isEmpty()) {
+                     album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
+                 }
+             }
+             album.count++;
+         }
 
-        for (Album album : albumMap.values()) {
-            Album saved = savedAlbums != null ? savedAlbums.get(album.id) : null;
-            if (saved == null && !savedAlbumsBySignature.isEmpty()) {
-                saved = savedAlbumsBySignature.get(albumSignature(album.artist, album.name));
-            }
-            if (saved != null) {
-                if (shouldUseSavedCover(album.cover, saved.cover)) {
-                    album.cover = saved.cover != null ? saved.cover.trim() : null;
-                }
-                if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
-                        && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
-                    album.releaseDate = saved.releaseDate;
-                }
-            }
-        }
+         for (Album album : albumMap.values()) {
+             Album saved = savedAlbums != null ? savedAlbums.get(album.id) : null;
+             if (saved == null && !savedAlbumsBySignature.isEmpty()) {
+                 saved = savedAlbumsBySignature.get(albumSignature(album.artist, album.name));
+             }
+             if (saved != null) {
+                 if (shouldUseSavedCover(album.cover, saved.cover)) {
+                     album.cover = saved.cover != null ? saved.cover.trim() : null;
+                 }
+                 // Préserver la date de sortie de l'album sauvegardé
+                 if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
+                         && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
+                     album.releaseDate = saved.releaseDate;
+                 }
+             }
+         }
 
-        List<Album> rebuiltAlbums = new ArrayList<>(albumMap.values());
-        rebuiltAlbums.sort(Comparator
-                .comparing((Album album) -> album.artist != null ? album.artist : "", String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(album -> album.name != null ? album.name : "", String.CASE_INSENSITIVE_ORDER));
+         List<Album> rebuiltAlbums = new ArrayList<>(albumMap.values());
+         rebuiltAlbums.sort(Comparator
+                 .comparing((Album album) -> album.artist != null ? album.artist : "", String.CASE_INSENSITIVE_ORDER)
+                 .thenComparing(album -> album.name != null ? album.name : "", String.CASE_INSENSITIVE_ORDER));
 
-        albumDao.clear();
-        if (!rebuiltAlbums.isEmpty()) {
-            albumDao.insertAll(rebuiltAlbums);
-        }
-    }
+         albumDao.clear();
+         if (!rebuiltAlbums.isEmpty()) {
+             albumDao.insertAll(rebuiltAlbums);
+         }
+     }
 
      private List<MediaStoreScanner.SourceRoot> buildActiveSourceRoots() {
          List<MediaStoreScanner.SourceRoot> roots = new ArrayList<>();

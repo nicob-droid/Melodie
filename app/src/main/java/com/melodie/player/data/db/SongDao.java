@@ -43,6 +43,7 @@ public interface SongDao {
             + "songs.albumId AS albumId, songs.trackNumber AS trackNumber, songs.duration AS duration, songs.path AS path, "
             + "songs.source AS source, songs.folderSourceId AS folderSourceId, "
             + "COALESCE(albums.cover, songs.cover) AS cover, "
+            + "COALESCE(NULLIF(albums.releaseDate, ''), songs.releaseDate) AS releaseDate, "
             + "songs.favorite AS favorite, songs.dateAdded AS dateAdded";
 
     String VISIBLE_SONGS_FILTER = "("

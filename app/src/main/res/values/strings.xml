@@ -59,6 +59,9 @@
 
     <!-- Recherche -->
     <string name="search_hint">Rechercher morceaux, albums, artistes…</string>
+    <string name="search_empty">Commencez à taper pour rechercher</string>
+    <string name="search_no_results">Aucun résultat trouvé</string>
+    <string name="search_no_active_source">Aucune source active pour afficher les résultats</string>
 
     <!-- Paramètres -->
     <string name="settings_audio">Audio</string>

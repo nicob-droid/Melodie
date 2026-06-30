@@ -59,6 +59,9 @@
 
     <!-- Search -->
     <string name="search_hint">Search songs, albums, artists…</string>
+    <string name="search_empty">Start typing to search</string>
+    <string name="search_no_results">No results found</string>
+    <string name="search_no_active_source">No active source to display results</string>
 
     <!-- Settings -->
     <string name="settings_audio">Audio</string>

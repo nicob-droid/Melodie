@@ -26,6 +26,10 @@ public class Song {
 
     public long albumId;
 
+    /** Année / date de sortie de l'album (ex. "2008"), null si inconnue */
+    @Nullable
+    public String releaseDate;
+
     /** track number within the album (0 = unknown) */
     public int trackNumber;
 

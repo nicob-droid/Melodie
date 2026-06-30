@@ -37,5 +37,10 @@ public class SearchViewModel extends ViewModel {
     public LiveData<List<Song>> results() {
         return results;
     }
+
+    public String getLastQuery() {
+        String q = query.getValue();
+        return q != null ? q : "";
+    }
 }
 
