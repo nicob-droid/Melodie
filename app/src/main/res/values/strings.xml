@@ -63,6 +63,9 @@
     <string name="search_no_results">Aucun résultat trouvé</string>
     <string name="search_no_active_source">Aucune source active pour afficher les résultats</string>
 
+    <!-- Synchronisation -->
+    <string name="drive_sync_in_progress">Synchronisation Google Drive en cours…</string>
+
     <!-- Paramètres -->
     <string name="settings_audio">Audio</string>
     <string name="settings_folders">Sources de dossiers</string>

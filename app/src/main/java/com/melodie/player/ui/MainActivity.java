@@ -16,6 +16,7 @@ import androidx.navigation.NavController;
 import androidx.navigation.fragment.NavHostFragment;
 
 import com.melodie.player.R;
+import com.melodie.player.data.repository.DriveRepository;
 import com.melodie.player.data.repository.MusicRepository;
 import com.melodie.player.playback.PlayerController;
 
@@ -35,6 +36,9 @@ public class MainActivity extends AppCompatActivity {
     @Inject
     MusicRepository musicRepository;
 
+    @Inject
+    DriveRepository driveRepository;
+
     private ActivityResultLauncher<String[]> permissionLauncher;
 
     @Override
@@ -53,6 +57,12 @@ public class MainActivity extends AppCompatActivity {
             boolean onPlayer = dest.getId() == R.id.playerFragment;
             miniPlayer.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
         });
+
+        // Bandeau global de synchronisation Drive : visible tant que la synchro tourne,
+        // même après avoir quitté l'écran Drive (la synchro s'exécute en arrière-plan).
+        View syncBanner = findViewById(R.id.sync_banner);
+        driveRepository.getIsSyncing().observe(this, syncing ->
+                syncBanner.setVisibility(Boolean.TRUE.equals(syncing) ? View.VISIBLE : View.GONE));
 
         permissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestMultiplePermissions(),

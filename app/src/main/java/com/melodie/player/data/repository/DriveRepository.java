@@ -43,6 +43,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -69,6 +71,11 @@ public class DriveRepository {
     private final SharedPreferences drivePrefs;
     private final MutableLiveData<String> authStatus = new MutableLiveData<>("LOGGED_OUT");
     private final MutableLiveData<Boolean> isLoading = new MutableLiveData<>(false);
+    private final MutableLiveData<Boolean> isSyncing = new MutableLiveData<>(false);
+
+    // Année en tête d'un libellé d'album : "[2000] ...", "(2000) ...", "2000 - ...".
+    private static final Pattern LEADING_YEAR_PATTERN = Pattern.compile(
+            "^\\s*(?:\\[\\s*((?:19|20)\\d{2})\\s*\\]|\\(\\s*((?:19|20)\\d{2})\\s*\\)|((?:19|20)\\d{2})\\s*-)");
 
     private Drive driveService;
     private volatile String driveAccessToken;
@@ -112,6 +119,10 @@ public class DriveRepository {
 
     public LiveData<Boolean> getIsLoading() {
         return isLoading;
+    }
+
+    public LiveData<Boolean> getIsSyncing() {
+        return isSyncing;
     }
 
     public GoogleSignInClient getGoogleSignInClient() {
@@ -314,6 +325,7 @@ public class DriveRepository {
     public void syncSelectedFolders(Runnable onDone) {
         executor.execute(() -> {
             try {
+                isSyncing.postValue(true);
                 isLoading.postValue(true);
                 if (driveService == null) {
                     Log.w(TAG, "Drive service is null, skipping selected folders sync");
@@ -388,6 +400,7 @@ public class DriveRepository {
                 Log.e(TAG, "Error syncing folders", e);
             } finally {
                 isLoading.postValue(false);
+                isSyncing.postValue(false);
                 if (onDone != null) onDone.run();
             }
         });
@@ -483,6 +496,11 @@ public class DriveRepository {
         song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
         song.trackNumber = audio.trackNumber > 0 ? audio.trackNumber : (metadata.trackNumber > 0 ? metadata.trackNumber : 0);
         song.duration = audio.durationMs > 0L ? audio.durationMs : 0L;
+        // Date de sortie extraite du nom de dossier ("[2000] Album"), null si absente :
+        // le rebuild d'albums et le repli en ligne géreront le cas échéant.
+        song.releaseDate = metadata.year != null && !metadata.year.trim().isEmpty()
+                ? metadata.year.trim()
+                : null;
         // Streaming direct: la resolution vers Drive API (alt=media) est faite dans PlaybackService.
         song.path = "drive://file/" + audio.fileId;
         song.source = Song.SOURCE_DRIVE;
@@ -550,6 +568,7 @@ public class DriveRepository {
         metadata.artist = artist;
         metadata.title = title;
         metadata.album = album;
+        metadata.year = firstNonEmpty(folderContext.year, sourceContext.year);
         metadata.trackNumber = trackNumber;
         return metadata;
     }
@@ -584,13 +603,33 @@ public class DriveRepository {
             String right = normalized.substring(dashIndex + 3).trim();
             if (isLikelyArtist(left)) {
                 context.artist = left;
+                context.year = extractLeadingYear(right);
                 context.album = normalizeAlbumLabel(right);
                 return context;
             }
         }
 
+        context.year = extractLeadingYear(normalized);
         context.album = normalizeAlbumLabel(normalized);
         return context;
+    }
+
+    /**
+     * Extrait l'année en tête d'un libellé d'album : "[2000] Album", "(2000) Album",
+     * "2000 - Album". Retourne null si aucune année en tête n'est détectée.
+     */
+    private String extractLeadingYear(String value) {
+        if (value == null) return null;
+        Matcher matcher = LEADING_YEAR_PATTERN.matcher(value.trim());
+        if (matcher.find()) {
+            for (int group = 1; group <= 3; group++) {
+                String candidate = matcher.group(group);
+                if (candidate != null && !candidate.isEmpty()) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
     }
 
     private String normalizeAlbumLabel(String value) {
@@ -890,12 +929,14 @@ public class DriveRepository {
         String artist;
         String title;
         String album;
+        String year;
         int trackNumber;
     }
 
     private static class AlbumContext {
         String artist;
         String album;
+        String year;
     }
 
     public LiveData<List<DriveAudio>> getAudioFilesFromFolder(String folderId) {
