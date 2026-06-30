@@ -30,6 +30,9 @@ public class AlbumsFragment extends Fragment {
     private TextView emptyStateView;
     private int lastAlbumCount;
     private boolean hasActiveSources = true;
+    private LibraryViewModel viewModel;
+    private LinearLayoutManager layoutManager;
+    private boolean pendingStateRestore;
 
     @Nullable
     @Override
@@ -42,9 +45,13 @@ public class AlbumsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         RecyclerView rv = view.findViewById(R.id.recycler);
         emptyStateView = view.findViewById(R.id.albums_empty_state);
-        rv.setLayoutManager(new LinearLayoutManager(requireContext()));
+        layoutManager = new LinearLayoutManager(requireContext());
+        rv.setLayoutManager(layoutManager);
         LibraryViewModel vm = new ViewModelProvider(requireParentFragment())
                 .get(LibraryViewModel.class);
+        viewModel = vm;
+        // Une restauration est en attente si on dispose d'un état sauvegardé.
+        pendingStateRestore = vm.albumsListState != null;
         LibraryAlbumListAdapter adapter = new LibraryAlbumListAdapter(
                 album -> {
                     Bundle args = new Bundle();
@@ -58,7 +65,14 @@ public class AlbumsFragment extends Fragment {
         rv.setAdapter(adapter);
 
         vm.albums().observe(getViewLifecycleOwner(), albums -> {
-            adapter.submitList(albums);
+            adapter.submitList(albums, () -> {
+                // Restaure la position de défilement une seule fois, après que la liste
+                // diffée soit réellement appliquée au RecyclerView.
+                if (pendingStateRestore && layoutManager != null && vm.albumsListState != null) {
+                    layoutManager.onRestoreInstanceState(vm.albumsListState);
+                    pendingStateRestore = false;
+                }
+            });
             lastAlbumCount = albums != null ? albums.size() : 0;
             updateEmptyState();
             // Prefetch covers only for albums we haven't prefetched yet.
@@ -104,6 +118,18 @@ public class AlbumsFragment extends Fragment {
                 prefetchedAlbumIds.add(album.id);
             }
         }
+    }
+
+    @Override
+    public void onDestroyView() {
+        // Sauvegarde la position de défilement avant la destruction de la vue
+        // (navigation vers la liste des morceaux), pour la restaurer au retour.
+        if (viewModel != null && layoutManager != null) {
+            viewModel.albumsListState = layoutManager.onSaveInstanceState();
+        }
+        layoutManager = null;
+        emptyStateView = null;
+        super.onDestroyView();
     }
 }
 

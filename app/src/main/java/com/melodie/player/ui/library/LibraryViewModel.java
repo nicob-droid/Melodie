@@ -3,6 +3,8 @@ package com.melodie.player.ui.library;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.ViewModel;
 
+import android.os.Parcelable;
+
 import com.melodie.player.data.entity.Album;
 import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Playlist;
@@ -26,6 +28,9 @@ public class LibraryViewModel extends ViewModel {
 
     private final MusicRepository repository;
     private final Set<Long> coverRequests = Collections.synchronizedSet(new HashSet<>());
+
+    /** Mémorise la position de défilement de la liste des albums pour la restaurer au retour. */
+    public Parcelable albumsListState;
 
     @Inject
     public LibraryViewModel(MusicRepository repository) {
