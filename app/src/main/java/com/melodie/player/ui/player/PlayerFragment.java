@@ -4,6 +4,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -217,6 +218,10 @@ public class PlayerFragment extends Fragment {
                     coverGlow.setBackground(radialGlow);
                     coverGlow.setAlpha(0.95f);
                 }
+                // Accent dérivé de la même base que le glow (vibrant), mais normalisé
+                // pour rester lisible : icône blanche sur btn_play + barre sur fond sombre.
+                int accent = buildReadableAccent(shiftSaturation(vibrant, 1.12f));
+                applyAccentToControls(accent);
             });
         });
     }
@@ -227,6 +232,50 @@ public class PlayerFragment extends Fragment {
         if (coverGlow != null) {
             coverGlow.setBackground(null);
         }
+        // Restaure les couleurs d'accent par défaut des contrôles.
+        int defaultProgress = ContextCompat.getColor(requireContext(), R.color.melodie_purple);
+        int defaultThumb = ContextCompat.getColor(requireContext(), R.color.audio_cyan);
+        if (btnPlay != null) {
+            btnPlay.setBackgroundTintList(ColorStateList.valueOf(defaultProgress));
+        }
+        if (seek != null) {
+            seek.setProgressTintList(ColorStateList.valueOf(defaultProgress));
+            seek.setThumbTintList(ColorStateList.valueOf(defaultThumb));
+        }
+    }
+
+    /**
+     * Applique la couleur d'accent (dérivée de la pochette) au bouton lecture et à la
+     * barre de progression. Le thumb utilise une variante éclaircie pour ressortir.
+     */
+    private void applyAccentToControls(int accent) {
+        if (btnPlay != null) {
+            btnPlay.setBackgroundTintList(ColorStateList.valueOf(accent));
+        }
+        if (seek != null) {
+            seek.setProgressTintList(ColorStateList.valueOf(accent));
+            seek.setThumbTintList(ColorStateList.valueOf(lighten(accent, 0.18f)));
+        }
+    }
+
+    /**
+     * Normalise une couleur en un accent vif mais lisible : saturation minimale garantie
+     * et luminosité bornée pour conserver le contraste avec l'icône blanche du bouton
+     * lecture et la visibilité de la barre sur le fond sombre.
+     */
+    private int buildReadableAccent(int color) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        hsv[1] = Math.max(0.45f, Math.min(1f, hsv[1]));
+        hsv[2] = Math.max(0.55f, Math.min(0.82f, hsv[2]));
+        return Color.HSVToColor(hsv);
+    }
+
+    private int lighten(int color, float amount) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        hsv[2] = Math.max(0f, Math.min(1f, hsv[2] + amount));
+        return Color.HSVToColor(hsv);
     }
 
     @Nullable
