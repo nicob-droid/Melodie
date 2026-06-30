@@ -15,6 +15,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
@@ -47,6 +48,7 @@ public class PlayerFragment extends Fragment {
     private TextView elapsed;
     private TextView total;
     private ImageButton btnPlay;
+    private ProgressBar buffering;
     private ImageView cover;
     private View coverGlow;
     private TextView title;
@@ -94,6 +96,7 @@ public class PlayerFragment extends Fragment {
         elapsed = view.findViewById(R.id.elapsed);
         total = view.findViewById(R.id.total);
         btnPlay = view.findViewById(R.id.btn_play);
+        buffering = view.findViewById(R.id.buffering);
         btnFav = view.findViewById(R.id.btn_fav);
         btnShuffle = view.findViewById(R.id.btn_shuffle);
         btnRepeat = view.findViewById(R.id.btn_repeat);
@@ -136,6 +139,24 @@ public class PlayerFragment extends Fragment {
         playerController.currentSong.observe(getViewLifecycleOwner(), this::bind);
         playerController.isPlaying.observe(getViewLifecycleOwner(), playing -> btnPlay
                 .setImageResource(Boolean.TRUE.equals(playing) ? R.drawable.ic_pause : R.drawable.ic_play));
+        playerController.isBuffering.observe(getViewLifecycleOwner(), this::showBuffering);
+    }
+
+    /**
+     * Affiche un spinner au centre du bouton lecture pendant que le flux n'est pas
+     * prêt (ex. chargement initial d'un fichier Drive), en masquant temporairement
+     * l'icône play/pause pour éviter la superposition.
+     */
+    private void showBuffering(Boolean isBuffering) {
+        boolean show = Boolean.TRUE.equals(isBuffering);
+        if (buffering != null) {
+            buffering.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+        if (btnPlay != null) {
+            btnPlay.setImageAlpha(show ? 0 : 255);
+            // Évite un toggle play/pause tant que le flux n'est pas prêt.
+            btnPlay.setEnabled(!show);
+        }
     }
 
     private void bind(Song s) {

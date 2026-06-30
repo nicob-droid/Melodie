@@ -191,6 +191,18 @@
         app:layout_constraintTop_toBottomOf="@id/elapsed"
         app:layout_constraintHorizontal_chainStyle="packed" />
 
+    <ProgressBar
+        android:id="@+id/buffering"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:indeterminate="true"
+        android:indeterminateTint="@color/text_primary"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="@id/btn_play"
+        app:layout_constraintBottom_toBottomOf="@id/btn_play"
+        app:layout_constraintStart_toStartOf="@id/btn_play"
+        app:layout_constraintEnd_toEndOf="@id/btn_play" />
+
     <ImageButton
         android:id="@+id/btn_next"
         android:layout_width="54dp"

@@ -64,6 +64,7 @@ public class PlayerController {
 
     public final MutableLiveData<Song> currentSong = new MutableLiveData<>(null);
     public final MutableLiveData<Boolean> isPlaying = new MutableLiveData<>(false);
+    public final MutableLiveData<Boolean> isBuffering = new MutableLiveData<>(false);
     public final MutableLiveData<Long> position = new MutableLiveData<>(0L);
     public final MutableLiveData<Long> duration = new MutableLiveData<>(0L);
 
@@ -107,6 +108,7 @@ public class PlayerController {
 
                     @Override
                     public void onPlaybackStateChanged(int state) {
+                        isBuffering.postValue(state == Player.STATE_BUFFERING);
                         if (controller != null) {
                             long currentDuration = Math.max(0, controller.getDuration());
                             duration.postValue(currentDuration);
