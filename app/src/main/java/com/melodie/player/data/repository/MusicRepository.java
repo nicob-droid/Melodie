@@ -49,6 +49,7 @@ public class MusicRepository {
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
     private static final String LOCAL_SOURCE_TREE_URI = "local://music";
     private static final String LOCAL_SOURCE_DISPLAY_NAME = "Téléphone / Music";
+    private static final String FAVORITES_PLAYLIST_NAME = "Favorites";
 
     private final Context context;
     private final SongDao songDao;
@@ -170,6 +171,50 @@ public class MusicRepository {
 
     public void toggleFavorite(Song song) {
         executor.execute(() -> songDao.setFavorite(song.id, !song.favorite));
+    }
+
+    /**
+     * Indique (de façon asynchrone) si un morceau appartient à la playlist "Favorites".
+     * Le callback est invoké depuis un thread d'arrière-plan : l'appelant doit basculer
+     * sur le thread principal s'il met à jour l'UI.
+     */
+    public void isSongFavorite(String songId, java.util.function.Consumer<Boolean> callback) {
+        if (callback == null) return;
+        if (songId == null || songId.trim().isEmpty()) {
+            callback.accept(false);
+            return;
+        }
+        executor.execute(() -> {
+            Long playlistId = playlistDao.getPlaylistIdByName(FAVORITES_PLAYLIST_NAME);
+            boolean favorite = playlistId != null
+                    && playlistDao.isSongInPlaylist(playlistId, songId) > 0;
+            callback.accept(favorite);
+        });
+    }
+
+    /**
+     * Ajoute ou retire un morceau de la playlist "Favorites". Si la playlist n'existe
+     * pas encore et que l'on ajoute un favori, elle est créée automatiquement.
+     */
+    public void setSongFavorite(String songId, boolean favorite, Runnable onDone) {
+        if (songId == null || songId.trim().isEmpty()) return;
+        executor.execute(() -> {
+            Long playlistId = playlistDao.getPlaylistIdByName(FAVORITES_PLAYLIST_NAME);
+            if (favorite) {
+                if (playlistId == null) {
+                    Playlist playlist = new Playlist();
+                    playlist.name = FAVORITES_PLAYLIST_NAME;
+                    playlist.createdAt = System.currentTimeMillis();
+                    playlistId = playlistDao.createPlaylist(playlist);
+                }
+                if (playlistDao.isSongInPlaylist(playlistId, songId) == 0) {
+                    playlistDao.addSongAtEnd(playlistId, songId);
+                }
+            } else if (playlistId != null) {
+                playlistDao.removeSong(playlistId, songId);
+            }
+            if (onDone != null) onDone.run();
+        });
     }
 
     public void createPlaylist(String name, LongConsumer onDone) {

@@ -32,6 +32,12 @@ public interface PlaylistDao {
     @Query("SELECT * FROM playlists WHERE id = :playlistId LIMIT 1")
     LiveData<Playlist> observePlaylist(long playlistId);
 
+    @Query("SELECT id FROM playlists WHERE name = :name LIMIT 1")
+    Long getPlaylistIdByName(String name);
+
+    @Query("SELECT COUNT(*) FROM playlist_song WHERE playlistId = :playlistId AND songId = :songId")
+    int isSongInPlaylist(long playlistId, String songId);
+
     @Query("SELECT " + SongDao.SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM playlist_song ps "
             + "JOIN songs ON songs.id = ps.songId "

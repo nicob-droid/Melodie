@@ -30,6 +30,7 @@ import androidx.palette.graphics.Palette;
 import com.bumptech.glide.Glide;
 import com.melodie.player.R;
 import com.melodie.player.data.entity.Song;
+import com.melodie.player.data.repository.MusicRepository;
 import com.melodie.player.playback.PlayerController;
 import com.melodie.player.util.DurationFormatter;
 
@@ -42,6 +43,9 @@ public class PlayerFragment extends Fragment {
 
     @Inject
     PlayerController playerController;
+
+    @Inject
+    MusicRepository repository;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SeekBar seek;
@@ -61,6 +65,7 @@ public class PlayerFragment extends Fragment {
     private boolean shuffle = false;
     private int repeatMode = Player.REPEAT_MODE_OFF;
     private Song currentSong;
+    private boolean isFavorite = false;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -120,7 +125,10 @@ public class PlayerFragment extends Fragment {
             btnRepeat.setAlpha(repeatMode == Player.REPEAT_MODE_OFF ? 0.5f : 1f);
         });
         btnFav.setOnClickListener(v -> {
-            // Toggle handled by adapter elsewhere; placeholder
+            if (currentSong == null) return;
+            isFavorite = !isFavorite;
+            updateFavoriteIcon(isFavorite);
+            repository.setSongFavorite(currentSong.id, isFavorite, null);
         });
 
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -163,8 +171,11 @@ public class PlayerFragment extends Fragment {
         currentSong = s;
         if (s == null) {
             applyDefaultBackground();
+            isFavorite = false;
+            updateFavoriteIcon(false);
             return;
         }
+        refreshFavoriteState(s);
         title.setText(s.title);
         artist.setText(s.artist != null ? s.artist : getString(R.string.unknown_artist));
         album.setText(s.album != null ? s.album : getString(R.string.unknown_album));
@@ -193,6 +204,39 @@ public class PlayerFragment extends Fragment {
                     }
                 })
                 .into(cover);
+    }
+
+    /**
+     * Interroge (en tâche de fond) l'appartenance du morceau à la playlist "Favorites"
+     * puis met à jour l'icône cœur sur le thread principal, en s'assurant que le morceau
+     * courant n'a pas changé entre-temps.
+     */
+    private void refreshFavoriteState(Song s) {
+        // État neutre (cœur vide) tant que la réponse n'est pas connue.
+        isFavorite = false;
+        updateFavoriteIcon(false);
+        if (s == null) return;
+        final String requestedId = s.id;
+        repository.isSongFavorite(requestedId, fav -> handler.post(() -> {
+            if (!isAdded()) return;
+            if (currentSong != null && requestedId.equals(currentSong.id)) {
+                isFavorite = Boolean.TRUE.equals(fav);
+                updateFavoriteIcon(isFavorite);
+            }
+        }));
+    }
+
+    /**
+     * Cœur plein (rouge) si favori, cœur vide sinon.
+     */
+    private void updateFavoriteIcon(boolean favorite) {
+        if (btnFav == null) return;
+        btnFav.setImageResource(favorite ? R.drawable.ic_favorite : R.drawable.ic_favorite_border);
+        if (isAdded()) {
+            int tint = ContextCompat.getColor(requireContext(),
+                    favorite ? R.color.state_error : R.color.text_primary);
+            btnFav.setImageTintList(ColorStateList.valueOf(tint));
+        }
     }
 
     private void applyArtworkGradient(@Nullable Drawable drawable) {
