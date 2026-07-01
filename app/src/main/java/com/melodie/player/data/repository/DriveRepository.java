@@ -36,13 +36,18 @@ import com.google.api.services.drive.model.FileList;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.FileOutputStream;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -59,6 +64,11 @@ public class DriveRepository {
     private static final String DRIVE_AUDIO_CACHE_DIR = "drive_audio_cache";
     private static final String PREFS_DRIVE_AUTH = "drive_auth";
     private static final String KEY_DRIVE_ACCESS_TOKEN = "drive_access_token";
+
+    // Extraction des durées : nombre d'extractions réseau menées en parallèle.
+    // Chaque extraction ne fait qu'une petite requête HTTP Range (16 Ko, keep-alive) ;
+    // concurrence modérée pour rester rapide sans se faire throttler par Google Drive.
+    private static final int DURATION_ENRICH_THREADS = 8;
 
     private final Context context;
     private final DriveFolderDao driveFolderDao;
@@ -79,6 +89,7 @@ public class DriveRepository {
 
     private Drive driveService;
     private volatile String driveAccessToken;
+    private volatile boolean durationEnrichmentRunning = false;
     private GoogleSignInClient googleSignInClient;
     private volatile boolean listFoldersInProgress = false;
 
@@ -359,8 +370,15 @@ public class DriveRepository {
 
                 List<Song> driveSongs = new ArrayList<>();
 
-                for (DriveFolder folder : selectedFolders) {
-                    String rootDriveId = resolveSelectedRootDriveId(folder, selectedById);
+                // Expansion récursive (comme Spiral Player) : cocher un dossier synchronise aussi
+                // TOUS ses sous-dossiers descendants, en héritant de la source du dossier coché.
+                Map<DriveFolder, String> foldersToSync = expandSelectedFoldersWithDescendants(selectedFolders, selectedById);
+                Log.d(TAG, "Sync targets after recursive expansion: " + foldersToSync.size()
+                        + " folders (from " + selectedFolders.size() + " selected)");
+
+                for (Map.Entry<DriveFolder, String> entry : foldersToSync.entrySet()) {
+                    DriveFolder folder = entry.getKey();
+                    String rootDriveId = entry.getValue();
                     FolderSource source = rootDriveId != null ? sourceByRootDriveId.get(rootDriveId) : null;
                     if (source == null) {
                         Log.w(TAG, "Skipping Drive folder without resolved root source: " + folder.driveId + " (root=" + rootDriveId + ")");
@@ -403,7 +421,123 @@ public class DriveRepository {
                 isSyncing.postValue(false);
                 if (onDone != null) onDone.run();
             }
+
+            // Enrichissement des durées en tâche de fond, une fois la sync terminée.
+            // On lit la durée directement dans l'en-tête du fichier audio via streaming
+            // authentifié (comme Spiral Player) : aucun téléchargement complet, l'UI se
+            // met à jour progressivement grâce à Room.
+            enrichDriveDurations();
         });
+    }
+
+    /**
+     * Renseigne proactivement la durée des morceaux Google Drive dont la durée est encore
+     * inconnue (0). Chaque durée est décodée depuis l'en-tête du conteneur (quelques Ko lus
+     * via requêtes HTTP Range, voir {@link TrackDurationProbe}), en parallèle. La table
+     * albums est reconstruite à la fin si au moins une durée a été récupérée.
+     */
+    private void enrichDriveDurations() {
+        final String token = driveAccessToken;
+        if (token == null || token.trim().isEmpty()) {
+            Log.w(TAG, "Skipping duration enrichment: no Drive access token");
+            return;
+        }
+
+        synchronized (this) {
+            if (durationEnrichmentRunning) {
+                Log.d(TAG, "Duration enrichment already running, skipping duplicate run");
+                return;
+            }
+            durationEnrichmentRunning = true;
+        }
+
+        // Instantané des morceaux sans durée : on itère dessus sans re-requêter, ce qui évite
+        // toute boucle infinie sur les fichiers dont l'extraction échoue.
+        final List<Song> pending = songDao.getDriveSongsWithUnknownDurationSync(Integer.MAX_VALUE);
+        if (pending == null || pending.isEmpty()) {
+            synchronized (this) { durationEnrichmentRunning = false; }
+            return;
+        }
+
+        final int total = pending.size();
+        Log.d(TAG, "Duration enrichment: " + total + " Drive songs (parallel x" + DURATION_ENRICH_THREADS + ")");
+
+        // Pool dédié : on ne bloque pas l'executor de sync et on traite plusieurs fichiers
+        // en parallèle pour masquer la latence réseau de chaque extraction.
+        final ExecutorService pool = Executors.newFixedThreadPool(DURATION_ENRICH_THREADS);
+        final AtomicInteger remaining = new AtomicInteger(total);
+        final AtomicInteger updated = new AtomicInteger(0);
+
+        for (Song song : pending) {
+            final Song s = song;
+            pool.execute(() -> {
+                try {
+                    if (s == null || s.id == null) return;
+                    String fileId = extractDriveFileIdFromSong(s);
+                    if (fileId == null) return;
+
+                    DriveAudio audio = driveAudioDao.getById(fileId);
+                    String fileName = audio != null ? audio.fileName : s.title;
+                    long fileSize = audio != null ? audio.fileSize : 0L;
+
+                    long durationMs = extractDriveDuration(fileId, fileName, fileSize, token);
+                    if (durationMs > 0L) {
+                        songDao.updateDuration(s.id, durationMs);
+                        if (audio != null) {
+                            audio.durationMs = durationMs;
+                            driveAudioDao.update(audio);
+                        }
+                        updated.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Duration task failed: " + e.getMessage());
+                } finally {
+                    if (remaining.decrementAndGet() == 0) {
+                        int done = updated.get();
+                        Log.d(TAG, "Duration enrichment done: " + done + "/" + total + " updated");
+                        if (done > 0) {
+                            musicRepository.rebuildAlbumsFromSongs();
+                        }
+                        pool.shutdown();
+                        synchronized (DriveRepository.this) { durationEnrichmentRunning = false; }
+                    }
+                }
+            });
+        }
+    }
+
+    private String extractDriveFileIdFromSong(Song song) {
+        if (song == null) return null;
+        if (song.path != null) {
+            String p = song.path.trim();
+            String prefix = "drive://file/";
+            if (p.startsWith(prefix)) {
+                String id = p.substring(prefix.length()).trim();
+                if (!id.isEmpty()) return id;
+            }
+        }
+        // Fallback: l'id d'une Song Drive est de la forme "D_<fileId>".
+        if (song.id != null && song.id.startsWith("D_")) {
+            String id = song.id.substring(2).trim();
+            if (!id.isEmpty()) return id;
+        }
+        return null;
+    }
+
+    /**
+     * Lit la durée d'un fichier audio Drive sans le télécharger : MediaMetadataRetriever
+     * n'accède qu'aux octets d'en-tête nécessaires via le endpoint de streaming Drive
+     * (alt=media) avec l'en-tête Authorization: Bearer.
+     */
+    /**
+     * Lit la durée d'un fichier audio Drive en ne récupérant que quelques Ko d'en-tête
+     * (une ou deux requêtes HTTP Range) et en décodant le conteneur. Rapide et sans
+     * MediaMetadataRetriever (qui streame le média et est bien trop lent sur des URL HTTP).
+     */
+    private long extractDriveDuration(String fileId, String fileName, long fileSize, String accessToken) {
+        if (fileId == null || fileId.trim().isEmpty()) return 0L;
+        String url = "https://www.googleapis.com/drive/v3/files/" + fileId.trim() + "?alt=media";
+        return TrackDurationProbe.probeDurationMs(url, "Bearer " + accessToken, fileName, fileSize);
     }
 
     private List<DriveAudio> syncAudioFilesFromFolder(String folderId) throws IOException {
@@ -426,20 +560,34 @@ public class DriveRepository {
 
         // musicMetadata n'est pas supporté sur toutes les versions de l'API Drive.
         // On utilise directement les champs de base pour éviter le double aller-retour systématique.
-        FileList result;
-        Drive.Files.List request = driveService.files().list()
-                .setQ(query)
-                .setSpaces("drive")
-                .setSupportsAllDrives(true)
-                .setIncludeItemsFromAllDrives(true)
-                .setFields("files(id,name,size,modifiedTime,webContentLink,mimeType)")
-                .setPageSize(1000);
-        result = request.execute();
-        List<File> files = result.getFiles();
+        // Pagination complète (comme Spiral Player) : on suit nextPageToken jusqu'à épuisement
+        // pour ne PAS s'arrêter aux 1000 premiers fichiers d'un dossier volumineux.
+        List<File> files = new ArrayList<>();
+        String pageToken = null;
+        do {
+            Drive.Files.List request = driveService.files().list()
+                    .setQ(query)
+                    .setSpaces("drive")
+                    .setSupportsAllDrives(true)
+                    .setIncludeItemsFromAllDrives(true)
+                    .setFields("nextPageToken,files(id,name,size,modifiedTime,webContentLink,mimeType)")
+                    .setPageSize(1000);
+            if (pageToken != null && !pageToken.isEmpty()) {
+                request.setPageToken(pageToken);
+            }
+            FileList result = request.execute();
+            List<File> pageFiles = result.getFiles();
+            if (pageFiles != null && !pageFiles.isEmpty()) {
+                files.addAll(pageFiles);
+            }
+            pageToken = result.getNextPageToken();
+        } while (pageToken != null && !pageToken.isEmpty());
+
+        Log.d(TAG, "Folder " + folderId + ": fetched " + files.size() + " audio files (paginated)");
 
         driveAudioDao.deleteByFolder(folderId);
 
-        if (files != null && !files.isEmpty()) {
+        if (!files.isEmpty()) {
             for (File file : files) {
                 DriveAudio audio = new DriveAudio();
                 audio.fileId = file.getId();
@@ -1096,6 +1244,61 @@ public class DriveRepository {
                 result.put(driveId, folder);
             }
         }
+        return result;
+    }
+
+    /**
+     * Étend l'ensemble des dossiers cochés à TOUS leurs descendants (récursivement),
+     * à la manière de Spiral Player : cocher un dossier revient à synchroniser toute
+     * son arborescence. Chaque dossier (coché ou descendant) est associé au rootDriveId
+     * de l'ancêtre coché dont il hérite la source.
+     *
+     * L'ordre d'insertion est préservé et chaque dossier n'apparaît qu'une seule fois,
+     * même si un parent et un de ses enfants sont cochés simultanément.
+     */
+    private Map<DriveFolder, String> expandSelectedFoldersWithDescendants(
+            List<DriveFolder> selectedFolders, Map<String, DriveFolder> selectedById) {
+        Map<DriveFolder, String> result = new LinkedHashMap<>();
+        if (selectedFolders == null || selectedFolders.isEmpty()) return result;
+
+        // Index de TOUS les dossiers connus + arborescence parent -> enfants.
+        List<DriveFolder> allFolders = driveFolderDao.getAllSync();
+        Map<String, List<DriveFolder>> childrenByParent = new HashMap<>();
+        if (allFolders != null) {
+            for (DriveFolder f : allFolders) {
+                if (f == null || f.parentDriveId == null) continue;
+                String parentId = f.parentDriveId.trim();
+                if (parentId.isEmpty()) continue;
+                childrenByParent.computeIfAbsent(parentId, k -> new ArrayList<>()).add(f);
+            }
+        }
+
+        Set<String> visited = new HashSet<>();
+        for (DriveFolder selected : selectedFolders) {
+            if (selected == null || selected.driveId == null) continue;
+            String selectedDriveId = selected.driveId.trim();
+            if (selectedDriveId.isEmpty()) continue;
+
+            String rootDriveId = resolveSelectedRootDriveId(selected, selectedById);
+
+            // Parcours en largeur depuis le dossier coché vers tous ses descendants.
+            Deque<DriveFolder> queue = new ArrayDeque<>();
+            queue.add(selected);
+            while (!queue.isEmpty()) {
+                DriveFolder current = queue.poll();
+                if (current == null || current.driveId == null) continue;
+                String currentDriveId = current.driveId.trim();
+                if (currentDriveId.isEmpty() || !visited.add(currentDriveId)) continue;
+
+                result.put(current, rootDriveId);
+
+                List<DriveFolder> children = childrenByParent.get(currentDriveId);
+                if (children != null) {
+                    queue.addAll(children);
+                }
+            }
+        }
+
         return result;
     }
 
