@@ -46,6 +46,7 @@
     <string name="folders_drive_sign_in_required">Connecte-toi à Google Drive pour ajouter une source.</string>
     <string name="folders_drive_empty_open_drive">Aucun dossier Drive chargé. Ouvre Google Drive pour synchroniser.</string>
     <string name="folders_drive_sources_added">Sources Google Drive ajoutées.</string>
+    <string name="folders_resync_drive">Resynchroniser Google Drive</string>
 
     <!-- Lecteur -->
     <string name="player_play">Lecture</string>

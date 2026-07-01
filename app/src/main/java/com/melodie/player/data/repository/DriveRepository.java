@@ -963,6 +963,101 @@ public class DriveRepository {
         });
     }
 
+    /**
+     * Resynchronise les sources Google Drive déjà ajoutées :
+     *   1) rafraîchit la liste des dossiers (découvre les nouveaux sous-dossiers),
+     *   2) reconstruit la sélection à partir des sources persistées (folder_sources),
+     *      en cochant aussi les nouveaux sous-dossiers,
+     *   3) relance la synchronisation des fichiers.
+     * Nécessaire car le flag `selected` est éphémère (réinitialisé à chaque re-listing),
+     * et {@link #syncAudioFilesFromFolder} n'est pas récursif : un nouveau sous-dossier
+     * n'est jamais synchronisé tant qu'il n'est pas explicitement sélectionné.
+     */
+    public void resyncExistingDriveSources(Runnable onDone) {
+        if (driveService == null) {
+            Log.w(TAG, "Drive service is null, skipping resync of existing sources");
+            if (onDone != null) onDone.run();
+            return;
+        }
+        // Le re-listing réinitialise les `selected` : on reconstruit ensuite la sélection.
+        listFoldersFromDrive(() -> executor.execute(() -> {
+            try {
+                selectFoldersUnderPersistedDriveSources();
+            } catch (Exception e) {
+                Log.e(TAG, "Error rebuilding Drive selection before resync", e);
+            }
+            syncSelectedFolders(onDone);
+        }));
+    }
+
+    /**
+     * Coche (selected=1) tous les dossiers Drive appartenant à une source déjà
+     * persistée (folder_sources "drive://folder/&lt;rootId&gt;"), y compris les
+     * sous-dossiers nouvellement ajoutés.
+     */
+    private void selectFoldersUnderPersistedDriveSources() {
+        List<FolderSource> sources = folderSourceDao.getAllSync();
+        Set<String> rootDriveIds = new HashSet<>();
+        if (sources != null) {
+            for (FolderSource s : sources) {
+                if (s == null || s.treeUri == null) continue;
+                if (s.treeUri.startsWith(DRIVE_SOURCE_PREFIX)) {
+                    String rootId = s.treeUri.substring(DRIVE_SOURCE_PREFIX.length()).trim();
+                    if (!rootId.isEmpty()) rootDriveIds.add(rootId);
+                }
+            }
+        }
+        if (rootDriveIds.isEmpty()) {
+            Log.d(TAG, "No persisted Drive sources, nothing to reselect");
+            return;
+        }
+
+        List<DriveFolder> all = driveFolderDao.getAllSync();
+        if (all == null || all.isEmpty()) return;
+
+        Map<String, DriveFolder> byId = new HashMap<>();
+        for (DriveFolder f : all) {
+            if (f != null && f.driveId != null && !f.driveId.trim().isEmpty()) {
+                byId.put(f.driveId.trim(), f);
+            }
+        }
+
+        int reselected = 0;
+        for (DriveFolder f : all) {
+            if (f == null) continue;
+            if (isUnderPersistedRoot(f, byId, rootDriveIds)) {
+                if (!f.selected) {
+                    f.selected = true;
+                    driveFolderDao.update(f);
+                    reselected++;
+                }
+            }
+        }
+        Log.d(TAG, "Reselected " + reselected + " Drive folder(s) under existing sources");
+    }
+
+    /**
+     * Remonte la chaîne des parents jusqu'à trouver (ou non) un dossier racine
+     * correspondant à une source Drive persistée.
+     */
+    private boolean isUnderPersistedRoot(DriveFolder folder,
+                                         Map<String, DriveFolder> byId,
+                                         Set<String> rootDriveIds) {
+        if (folder == null || folder.driveId == null) return false;
+        Set<String> visited = new HashSet<>();
+        DriveFolder current = folder;
+        while (current != null) {
+            String id = current.driveId != null ? current.driveId.trim() : "";
+            if (id.isEmpty() || !visited.add(id)) return false;
+            if (rootDriveIds.contains(id)) return true;
+            String parentId = current.parentDriveId != null ? current.parentDriveId.trim() : "";
+            if (parentId.isEmpty()) return false;
+            if (rootDriveIds.contains(parentId)) return true;
+            current = byId.get(parentId);
+        }
+        return false;
+    }
+
     private Map<String, FolderSource> persistDriveFolderSources(List<DriveFolder> folders,
                                                                 Map<String, DriveFolder> selectedById) {
         Map<String, FolderSource> sourceByRootDriveId = new HashMap<>();

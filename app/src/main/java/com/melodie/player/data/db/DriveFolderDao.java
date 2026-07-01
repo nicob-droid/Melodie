@@ -23,6 +23,9 @@ public interface DriveFolderDao {
     @Query("SELECT * FROM drive_folders ORDER BY name COLLATE NOCASE ASC")
     LiveData<List<DriveFolder>> observeAll();
 
+    @Query("SELECT * FROM drive_folders")
+    List<DriveFolder> getAllSync();
+
     @Query("SELECT * FROM drive_folders WHERE selected = 1")
     List<DriveFolder> getSelected();
 

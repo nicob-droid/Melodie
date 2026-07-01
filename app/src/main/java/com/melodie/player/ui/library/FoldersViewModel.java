@@ -85,6 +85,24 @@ public class FoldersViewModel extends ViewModel {
         driveRepository.listFoldersFromDrive(null);
     }
 
+    /**
+     * Resynchronise Google Drive à la demande : rafraîchit la liste des dossiers,
+     * reconstruit la sélection à partir des sources déjà ajoutées (y compris les
+     * nouveaux sous-dossiers), puis relance la synchronisation des fichiers.
+     */
+    public void resyncDrive(Runnable onDone) {
+        if (!driveRepository.isLoggedIn()) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        driveRepository.resyncExistingDriveSources(onDone);
+    }
+
+    /** Indique si une synchronisation Drive est en cours (pour désactiver l'UI). */
+    public LiveData<Boolean> getIsDriveSyncing() {
+        return driveRepository.getIsSyncing();
+    }
+
     public void toggleFolderSourceEnabled(FolderSource source) {
         repository.toggleFolderSourceEnabled(source);
     }

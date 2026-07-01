@@ -7,6 +7,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.net.Uri;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -62,6 +63,7 @@ public class FoldersFragment extends Fragment {
         emptyView = view.findViewById(R.id.folders_empty);
         MaterialButton addButton = view.findViewById(R.id.btn_add_source);
         MaterialButton addDriveButton = view.findViewById(R.id.btn_add_drive_source);
+        MaterialButton resyncButton = view.findViewById(R.id.btn_resync_drive);
 
         adapter = new FolderSourceAdapter(new FolderSourceAdapter.OnFolderSourceActionListener() {
             @Override
@@ -99,6 +101,21 @@ public class FoldersFragment extends Fragment {
         addButton.setOnClickListener(v -> addFolderLauncher.launch(null));
         // Demande utilisateur: ouvrir directement Google Drive, sans popup intermédiaire.
         addDriveButton.setOnClickListener(v -> openDriveScreen());
+
+        resyncButton.setOnClickListener(v -> {
+            if (!viewModel.isDriveLoggedIn()) {
+                Toast.makeText(requireContext(),
+                        R.string.folders_drive_sign_in_required, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Toast.makeText(requireContext(),
+                    R.string.drive_sync_in_progress, Toast.LENGTH_SHORT).show();
+            viewModel.resyncDrive(null);
+        });
+
+        // Désactive le bouton pendant la synchro pour éviter les lancements multiples.
+        viewModel.getIsDriveSyncing().observe(getViewLifecycleOwner(), syncing ->
+                resyncButton.setEnabled(!Boolean.TRUE.equals(syncing)));
 
         viewModel.getFolderSources().observe(getViewLifecycleOwner(), this::submitSources);
     }

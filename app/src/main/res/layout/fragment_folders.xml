@@ -51,6 +51,16 @@
         app:iconGravity="textStart"
         app:iconPadding="8dp" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_resync_drive"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/folders_resync_drive"
+        app:icon="@android:drawable/ic_popup_sync"
+        app:iconGravity="textStart"
+        app:iconPadding="8dp" />
+
     <TextView
         android:id="@+id/folders_empty"
         android:layout_width="match_parent"

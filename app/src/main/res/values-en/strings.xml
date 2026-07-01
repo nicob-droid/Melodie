@@ -46,6 +46,7 @@
     <string name="folders_drive_sign_in_required">Sign in to Google Drive to add a source.</string>
     <string name="folders_drive_empty_open_drive">No Drive folder loaded yet. Open Google Drive to sync first.</string>
     <string name="folders_drive_sources_added">Google Drive sources added.</string>
+    <string name="folders_resync_drive">Resync Google Drive</string>
 
     <!-- Player -->
     <string name="player_play">Play</string>
