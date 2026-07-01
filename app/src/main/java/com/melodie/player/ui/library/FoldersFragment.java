@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.net.Uri;
 
@@ -50,6 +51,12 @@ public class FoldersFragment extends Fragment {
         super.onViewCreated(view, savedInstanceState);
 
         viewModel = new ViewModelProvider(this).get(FoldersViewModel.class);
+
+        ImageButton backButton = view.findViewById(R.id.btn_back);
+        if (backButton != null) {
+            backButton.setOnClickListener(v ->
+                    NavHostFragment.findNavController(this).navigateUp());
+        }
 
         RecyclerView recyclerView = view.findViewById(R.id.folders_recycler);
         emptyView = view.findViewById(R.id.folders_empty);

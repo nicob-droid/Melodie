@@ -7,6 +7,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.ImageButton;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -14,6 +15,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.navigation.fragment.NavHostFragment;
 
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.melodie.player.R;
@@ -76,6 +78,12 @@ public class EqualizerFragment extends Fragment {
 
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        ImageButton backButton = view.findViewById(R.id.btn_back);
+        if (backButton != null) {
+            backButton.setOnClickListener(v ->
+                    NavHostFragment.findNavController(this).navigateUp());
+        }
+
         presetSpinner = view.findViewById(R.id.preset_spinner);
         unavailable = view.findViewById(R.id.eq_unavailable);
         bassSwitch = view.findViewById(R.id.switch_bass_boost);
