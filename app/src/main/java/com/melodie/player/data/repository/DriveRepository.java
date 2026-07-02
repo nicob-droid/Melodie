@@ -98,6 +98,9 @@ public class DriveRepository {
     // Année en tête d'un libellé d'album : "[2000] ...", "(2000) ...", "2000 - ...".
     private static final Pattern LEADING_YEAR_PATTERN = Pattern.compile(
             "^\\s*(?:\\[\\s*((?:19|20)\\d{2})\\s*\\]|\\(\\s*((?:19|20)\\d{2})\\s*\\)|((?:19|20)\\d{2})\\s*-)");
+    // Année en fin de libellé : "... (2000)", "... [2000]", "... - 2000".
+    private static final Pattern TRAILING_YEAR_PATTERN = Pattern.compile(
+            "(?:\\(|\\[)?((?:19|20)\\d{2})(?:\\)|\\])?\\s*$");
 
     private Drive driveService;
     private volatile String driveAccessToken;
@@ -1311,13 +1314,13 @@ public class DriveRepository {
             String right = normalized.substring(dashIndex + 3).trim();
             if (isLikelyArtist(left)) {
                 context.artist = left;
-                context.year = extractLeadingYear(right);
+                context.year = extractAlbumYear(right);
                 context.album = normalizeAlbumLabel(right);
                 return context;
             }
         }
 
-        context.year = extractLeadingYear(normalized);
+        context.year = extractAlbumYear(normalized);
         context.album = normalizeAlbumLabel(normalized);
         return context;
     }
@@ -1340,6 +1343,27 @@ public class DriveRepository {
         return null;
     }
 
+    /**
+     * Extrait l'année d'un libellé d'album en gérant le préfixe ET le suffixe.
+     * Exemples: "[2013] Album", "Album (2013)", "Album - 2013".
+     */
+    private String extractAlbumYear(String value) {
+        String leading = extractLeadingYear(value);
+        if (leading != null) return leading;
+        if (value == null) return null;
+
+        String normalized = value.trim();
+        if (normalized.isEmpty()) return null;
+
+        Matcher matcher = TRAILING_YEAR_PATTERN.matcher(normalized);
+        if (!matcher.find()) return null;
+
+        // Evite les faux positifs sur des titres purement numériques de type "2013".
+        String withoutYear = normalized.substring(0, matcher.start()).trim();
+        if (withoutYear.isEmpty()) return null;
+        return matcher.group(1);
+    }
+
     private String normalizeAlbumLabel(String value) {
         if (value == null) return null;
         String v = value.trim();
@@ -1349,6 +1373,10 @@ public class DriveRepository {
         v = v.replaceFirst("^\\[(19|20)\\d{2}\\]\\s*", "");
         v = v.replaceFirst("^\\((19|20)\\d{2}\\)\\s*", "");
         v = v.replaceFirst("^(19|20)\\d{2}\\s*-\\s*", "");
+        // Remove common year suffixes: Album (2004), Album [2004], Album - 2004
+        v = v.replaceFirst("\\s*\\((19|20)\\d{2}\\)\\s*$", "");
+        v = v.replaceFirst("\\s*\\[(19|20)\\d{2}\\]\\s*$", "");
+        v = v.replaceFirst("\\s*-\\s*(19|20)\\d{2}\\s*$", "");
         v = v.trim();
 
         return v.isEmpty() ? null : v;
