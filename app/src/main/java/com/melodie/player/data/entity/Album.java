@@ -7,6 +7,11 @@ import androidx.room.PrimaryKey;
 
 @Entity(tableName = "albums")
 public class Album {
+    public static final int SOURCE_UNKNOWN = 0;
+    public static final int SOURCE_LOCAL = 1;
+    public static final int SOURCE_DRIVE = 2;
+    public static final int SOURCE_MIXED = 3;
+
     @PrimaryKey
     public long id;
 
@@ -23,5 +28,8 @@ public class Album {
     public String releaseDate;
 
     public int count;
+
+    /** Indique la provenance principale de l'album pour le badge UI. */
+    public int sourceType = SOURCE_UNKNOWN;
 }
 

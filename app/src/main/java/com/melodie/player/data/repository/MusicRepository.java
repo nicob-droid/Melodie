@@ -542,6 +542,7 @@ public class MusicRepository {
              }
 
              Album album = albumMap.get(song.albumId);
+              int songSourceType = Song.SOURCE_DRIVE.equals(song.source) ? Album.SOURCE_DRIVE : Album.SOURCE_LOCAL;
              if (album == null) {
                  album = new Album();
                  album.id = song.albumId;
@@ -552,6 +553,7 @@ public class MusicRepository {
                          ? song.releaseDate.trim()
                          : null;
                  album.count = 0;
+                  album.sourceType = songSourceType;
                  albumMap.put(album.id, album);
              } else {
                  if ((album.artist == null || album.artist.trim().isEmpty())
@@ -569,6 +571,9 @@ public class MusicRepository {
                  if (album.name == null || album.name.trim().isEmpty()) {
                      album.name = song.album != null && !song.album.trim().isEmpty() ? song.album.trim() : "Unknown";
                  }
+                  if (album.sourceType != songSourceType) {
+                      album.sourceType = Album.SOURCE_MIXED;
+                  }
              }
              album.count++;
          }

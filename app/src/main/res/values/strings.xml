@@ -107,6 +107,10 @@
     <string name="unknown_artist">Artiste inconnu</string>
     <string name="unknown_album">Album inconnu</string>
     <string name="release_date_unknown">Inconnue</string>
+    <string name="album_source_badge_local">Album local</string>
+    <string name="album_source_badge_drive">Album Google Drive</string>
+    <string name="album_source_badge_mixed">Album multi-sources</string>
+    <string name="album_source_badge_unknown">Source inconnue</string>
     <string name="artist_song_count">%1$d morceaux</string>
     <string name="song_more_actions">Actions du morceau</string>
 
