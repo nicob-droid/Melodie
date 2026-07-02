@@ -70,6 +70,10 @@ public class DriveViewModel extends ViewModel {
         return repository.getIsLoading();
     }
 
+    public LiveData<DriveRepository.SyncProgressState> getSyncProgress() {
+        return repository.getSyncProgress();
+    }
+
     public LiveData<List<DriveFolder>> getDriveFolders() {
         return repository.observeDriveFolders();
     }

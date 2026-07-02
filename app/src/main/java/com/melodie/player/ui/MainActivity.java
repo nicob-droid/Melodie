@@ -5,6 +5,8 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -21,6 +23,7 @@ import com.melodie.player.data.repository.MusicRepository;
 import com.melodie.player.playback.PlayerController;
 
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 import javax.inject.Inject;
@@ -61,8 +64,46 @@ public class MainActivity extends AppCompatActivity {
         // Bandeau global de synchronisation Drive : visible tant que la synchro tourne,
         // même après avoir quitté l'écran Drive (la synchro s'exécute en arrière-plan).
         View syncBanner = findViewById(R.id.sync_banner);
+        ProgressBar syncProgress = findViewById(R.id.sync_banner_progress);
+        TextView syncDetail = findViewById(R.id.sync_banner_detail);
         driveRepository.getIsSyncing().observe(this, syncing ->
                 syncBanner.setVisibility(Boolean.TRUE.equals(syncing) ? View.VISIBLE : View.GONE));
+
+        driveRepository.getSyncProgress().observe(this, state -> {
+            if (state == null) {
+                syncProgress.setIndeterminate(true);
+                syncProgress.setMax(100);
+                syncProgress.setProgress(0);
+                syncDetail.setText("");
+                return;
+            }
+
+            syncProgress.setIndeterminate(false);
+            syncProgress.setMax(100);
+
+            if ("duration".equals(state.phase)) {
+                int durationPct = state.total > 0
+                        ? Math.min(20, (state.current * 20) / Math.max(state.total, 1))
+                        : 0;
+                int globalPct = Math.min(100, 80 + durationPct);
+                syncProgress.setProgress(globalPct);
+                String detail = state.total > 0
+                        ? String.format(Locale.getDefault(), "Progression globale: %d%% • Durées %d/%d", globalPct, state.current, state.total)
+                        : String.format(Locale.getDefault(), "Progression globale: %d%%", globalPct);
+                syncDetail.setText(detail);
+                return;
+            }
+
+            int basePct = state.total > 0
+                    ? Math.min(80, (state.current * 80) / Math.max(state.total, 1))
+                    : 5;
+            syncProgress.setProgress(basePct);
+
+            String tracksPart = state.tracksTotal > 0
+                    ? String.format(Locale.getDefault(), "%d/%d pistes", state.tracksDone, state.tracksTotal)
+                    : String.format(Locale.getDefault(), "%d pistes", state.tracksDone);
+            syncDetail.setText(String.format(Locale.getDefault(), "Progression globale: %d%% • %s", basePct, tracksPart));
+        });
 
         permissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestMultiplePermissions(),
