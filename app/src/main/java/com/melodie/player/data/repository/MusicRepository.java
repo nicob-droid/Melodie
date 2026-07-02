@@ -390,10 +390,12 @@ public class MusicRepository {
          executor.execute(() -> {
              try {
                  if (album == null) return;
-                 android.util.Log.d("CoverDebug", "resolveAlbumCover id=" + album.id
-                         + " force=" + force + " cover=" + album.cover
-                         + " release=" + album.releaseDate
-                         + " onlineEnabled=" + isOnlineCoverEnabled());
+                 if (force) {
+                     android.util.Log.d("CoverDebug", "resolveAlbumCover id=" + album.id
+                             + " force=" + force + " cover=" + album.cover
+                             + " release=" + album.releaseDate
+                             + " onlineEnabled=" + isOnlineCoverEnabled());
+                 }
                  if (!isOnlineCoverEnabled()) return;
                   String currentCover = album.cover != null ? album.cover.trim() : "";
                   String currentReleaseDate = album.releaseDate != null ? album.releaseDate.trim() : "";

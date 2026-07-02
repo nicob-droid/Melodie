@@ -31,7 +31,9 @@ final class TrackDurationProbe {
     // Petit bloc d'en-tête : suffit pour l'en-tête de trame + Xing dans la majorité des cas.
     // La TAILLE TOTALE du fichier est lue depuis l'en-tête HTTP Content-Range (fiable),
     // ce qui permet le calcul de durée des MP3 CBR sans dépendre d'une taille en base.
-    private static final int HEAD_SIZE = 16 * 1024;
+    // 64 Ko réduit fortement les re-lectures sur MP3 avec gros tags ID3v2 (cover embarquée),
+    // tout en restant très léger côté transfert.
+    private static final int HEAD_SIZE = 64 * 1024;
     private static final int MAX_ATTEMPTS = 3;
 
     static {

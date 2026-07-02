@@ -422,19 +422,8 @@ public class DriveRepository {
         audio.folderId = folderId != null ? folderId : "";
         audio.fileSize = file.getSize() != null ? file.getSize() : 0L;
         audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0L;
-        audio.durationMs = 0L;
-        audio.trackNumber = 0;
-        Object musicMetaRaw = file.get("musicMetadata");
-        if (!(musicMetaRaw instanceof Map)) {
-            // Compatibilite defensive avec d'anciens payloads/tests.
-            musicMetaRaw = file.get("audioMediaMetadata");
-        }
-        if (musicMetaRaw instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> musicMeta = (Map<String, Object>) musicMetaRaw;
-            audio.durationMs = parseLongValue(musicMeta.get("durationMillis"));
-            audio.trackNumber = (int) parseLongValue(musicMeta.get("trackNumber"));
-        }
+        audio.durationMs = extractDurationFromDriveMetadata(file);
+        audio.trackNumber = extractTrackNumberFromDriveMetadata(file);
         audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
         audio.downloaded = previous != null && canReuseCachedFile(previous, audio);
         audio.localPath = audio.downloaded && previous != null ? previous.localPath : "";
@@ -894,10 +883,8 @@ public class DriveRepository {
         final AtomicInteger failed = new AtomicInteger(0);
         final AtomicLong totalProbeMs = new AtomicLong(0L);
         final List<Long> probeLatenciesMs = Collections.synchronizedList(new ArrayList<>());
-        // Mise à jour intermédiaire de l'UI tous les N morceaux enrichis (évite d'attendre
-        // la fin du batch entier — qui peut faire 500+ morceaux — pour voir les durées).
-        final int INTERIM_REBUILD_INTERVAL = 20;
-        final AtomicInteger lastRebuildAt = new AtomicInteger(0);
+        // Rebuild unique en fin de batch: évite de reconstruire toute la table albums
+        // des dizaines de fois pendant l'enrichissement (coût CPU/DB + bruit CoverDebug).
 
         for (Song song : pending) {
             final Song s = song;
@@ -923,14 +910,7 @@ public class DriveRepository {
                             audio.durationMs = durationMs;
                             driveAudioDao.update(audio);
                         }
-                        int newCount = updated.incrementAndGet();
-                        // Rebuild intermédiaire : met à jour l'UI au fil de l'eau sans attendre
-                        // la fin du batch, afin que les durées s'affichent progressivement.
-                        int prev = lastRebuildAt.get();
-                        if (newCount - prev >= INTERIM_REBUILD_INTERVAL
-                                && lastRebuildAt.compareAndSet(prev, newCount)) {
-                            musicRepository.rebuildAlbumsFromSongs();
-                        }
+                        updated.incrementAndGet();
                     } else {
                         failed.incrementAndGet();
                     }
@@ -1185,19 +1165,8 @@ public class DriveRepository {
                 audio.folderId = folderId;
                 audio.fileSize = file.getSize() != null ? file.getSize() : 0;
                 audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0;
-                audio.durationMs = 0L;
-                audio.trackNumber = 0;
-                Object musicMetaRaw = file.get("musicMetadata");
-                if (!(musicMetaRaw instanceof Map)) {
-                    // Compatibilite defensive avec d'anciens payloads/tests.
-                    musicMetaRaw = file.get("audioMediaMetadata");
-                }
-                if (musicMetaRaw instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> musicMeta = (Map<String, Object>) musicMetaRaw;
-                    audio.durationMs = parseLongValue(musicMeta.get("durationMillis"));
-                    audio.trackNumber = (int) parseLongValue(musicMeta.get("trackNumber"));
-                }
+                audio.durationMs = extractDurationFromDriveMetadata(file);
+                audio.trackNumber = extractTrackNumberFromDriveMetadata(file);
                 audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
                 audio.downloaded = false;
                 audio.localPath = "";
@@ -1488,6 +1457,36 @@ public class DriveRepository {
     private String normalize(String value) {
         if (value == null) return "";
         return value.trim().toLowerCase();
+    }
+
+    private long extractDurationFromDriveMetadata(File file) {
+        if (file == null) return 0L;
+        Object musicMetaRaw = file.get("musicMetadata");
+        Object audioMetaRaw = file.get("audioMediaMetadata");
+        long duration = parseLongValue(readMetadataField(musicMetaRaw, "durationMillis"));
+        if (duration > 0L) return duration;
+        return parseLongValue(readMetadataField(audioMetaRaw, "durationMillis"));
+    }
+
+    private int extractTrackNumberFromDriveMetadata(File file) {
+        if (file == null) return 0;
+        Object musicMetaRaw = file.get("musicMetadata");
+        Object audioMetaRaw = file.get("audioMediaMetadata");
+        long track = parseLongValue(readMetadataField(musicMetaRaw, "trackNumber"));
+        if (track > 0L) return (int) track;
+        track = parseLongValue(readMetadataField(audioMetaRaw, "trackNumber"));
+        return track > 0L ? (int) track : 0;
+    }
+
+    private Object readMetadataField(Object metadataRaw, String key) {
+        if (metadataRaw == null || key == null || key.trim().isEmpty()) return null;
+        if (metadataRaw instanceof Map) {
+            return ((Map<?, ?>) metadataRaw).get(key);
+        }
+        if (metadataRaw instanceof com.google.api.client.util.GenericData) {
+            return ((com.google.api.client.util.GenericData) metadataRaw).get(key);
+        }
+        return null;
     }
 
     private long parseLongValue(Object raw) {
