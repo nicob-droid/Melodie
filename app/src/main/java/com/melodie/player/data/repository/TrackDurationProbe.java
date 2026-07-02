@@ -53,8 +53,18 @@ final class TrackDurationProbe {
      * @return durée en millisecondes, ou 0 si indéterminable
      */
     static long probeDurationMs(String url, String authHeader, String fileName, long fileSize) {
+        HttpURLConnection baseConn = null;
         try {
-            Range headRange = rangeGetR(url, authHeader, 0, HEAD_SIZE);
+            // Crée UNE SEULE connexion HTTP réutilisable pour ce fichier.
+            // Cela économise les handshakes TLS/TCP et réduit drastiquement la latence.
+            baseConn = (HttpURLConnection) new URL(url).openConnection();
+            baseConn.setRequestMethod("GET");
+            baseConn.setRequestProperty("Authorization", authHeader);
+            baseConn.setRequestProperty("Accept-Encoding", "identity");
+            baseConn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            baseConn.setReadTimeout(READ_TIMEOUT_MS);
+
+            Range headRange = rangeGetRWithConn(url, authHeader, 0, HEAD_SIZE, baseConn);
             byte[] head = headRange != null ? headRange.data : null;
             if (head == null || head.length < 12) return 0L;
 
@@ -76,21 +86,21 @@ final class TrackDurationProbe {
                 duration = parseWav(head);
             } else if (head.length >= 8 && head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p') {
                 format = "mp4";
-                duration = parseMp4(url, authHeader, head, realSize);
+                duration = parseMp4(url, authHeader, head, realSize, baseConn);
             } else if (head[0] == 'O' && head[1] == 'g' && head[2] == 'g' && head[3] == 'S') {
                 format = "ogg";
-                duration = parseOgg(url, authHeader, head, realSize);
+                duration = parseOgg(url, authHeader, head, realSize, baseConn);
             } else {
                 format = "mp3";
-                duration = parseMp3(url, authHeader, head, realSize);
+                duration = parseMp3(url, authHeader, head, realSize, baseConn);
                 if (duration <= 0) {
                     // Repli sur l'extension pour les conteneurs non détectés par signature.
                     if (lower.endsWith(".flac")) { format = "flac?"; duration = parseFlac(head); }
                     else if (lower.endsWith(".wav")) { format = "wav?"; duration = parseWav(head); }
                     else if (lower.endsWith(".m4a") || lower.endsWith(".mp4") || lower.endsWith(".aac")) {
-                        format = "mp4?"; duration = parseMp4(url, authHeader, head, realSize);
+                        format = "mp4?"; duration = parseMp4(url, authHeader, head, realSize, baseConn);
                     } else if (lower.endsWith(".ogg") || lower.endsWith(".opus")) {
-                        format = "ogg?"; duration = parseOgg(url, authHeader, head, realSize);
+                        format = "ogg?"; duration = parseOgg(url, authHeader, head, realSize, baseConn);
                     }
                 }
             }
@@ -125,11 +135,39 @@ final class TrackDurationProbe {
         return r != null ? r.data : null;
     }
 
+    private static byte[] rangeGetWithConn(String url, String authHeader, long start, int length, HttpURLConnection baseConn) throws IOException {
+        Range r = rangeGetRWithConn(url, authHeader, start, length, baseConn);
+        return r != null ? r.data : null;
+    }
+
     private static Range rangeGetR(String url, String authHeader, long start, int length) throws IOException {
         IOException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 return doRangeGet(url, authHeader, start, length);
+            } catch (IOException e) {
+                last = e;
+                // Backoff léger : laisse retomber un éventuel throttling de Drive avant de réessayer.
+                try {
+                    Thread.sleep(200L * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted", ie);
+                }
+            }
+        }
+        throw last != null ? last : new IOException("range request failed");
+    }
+
+    /**
+     * Version de rangeGetR qui réutilise une HttpURLConnection existante.
+     * Cela économise les handshakes TLS et améliore la latence.
+     */
+    private static Range rangeGetRWithConn(String url, String authHeader, long start, int length, HttpURLConnection baseConn) throws IOException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return doRangeGetWithConn(url, authHeader, start, length, baseConn);
             } catch (IOException e) {
                 last = e;
                 // Backoff léger : laisse retomber un éventuel throttling de Drive avant de réessayer.
@@ -181,6 +219,41 @@ final class TrackDurationProbe {
         }
     }
 
+    /**
+     * Effectue une requête Range en réutilisant une HttpURLConnection existante.
+     * Cela économise les handshakes TLS/TCP et améliore drastiquement la latence.
+     */
+    private static Range doRangeGetWithConn(String url, String authHeader, long start, int length, HttpURLConnection baseConn) throws IOException {
+        try {
+            // Utilise la connexion existante (déjà configurée avec auth, timeouts, etc.)
+            // pour faire la requête Range. Cela établit la socket TCP/TLS qu'on veut réutiliser.
+            baseConn.setRequestProperty("Range", "bytes=" + start + "-" + (start + length - 1));
+
+            int code = baseConn.getResponseCode();
+            if (code != HttpURLConnection.HTTP_PARTIAL && code != HttpURLConnection.HTTP_OK) {
+                drainAndClose(baseConn.getErrorStream());
+                return null;
+            }
+
+            long total = parseTotalSize(baseConn.getHeaderField("Content-Range"));
+
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.min(length, 64 * 1024));
+            byte[] buf = new byte[8192];
+            // On lit la réponse en ENTIER (bornée par la plage demandée) : consommer tout le
+            // corps est indispensable pour que HttpURLConnection remette la socket dans le
+            // pool keep-alive au lieu de la fermer.
+            try (InputStream in = baseConn.getInputStream()) {
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    bos.write(buf, 0, r);
+                }
+            }
+            return new Range(bos.toByteArray(), total);
+        } catch (IOException e) {
+            throw e;
+        }
+    }
+
     /** Extrait la taille totale d'un en-tête "Content-Range: bytes start-end/total". */
     private static long parseTotalSize(String contentRange) {
         if (contentRange == null) return -1L;
@@ -212,6 +285,10 @@ final class TrackDurationProbe {
     // ---------------------------------------------------------------------------------------------
 
     private static long parseMp3(String url, String authHeader, byte[] head, long fileSize) throws IOException {
+        return parseMp3(url, authHeader, head, fileSize, null);
+    }
+
+    private static long parseMp3(String url, String authHeader, byte[] head, long fileSize, HttpURLConnection baseConn) throws IOException {
         int dataStart = 0;
         // Skip d'un éventuel tag ID3v2 (peut être volumineux : pochette embarquée).
         if (head.length >= 10 && head[0] == 'I' && head[1] == 'D' && head[2] == '3') {
@@ -225,6 +302,8 @@ final class TrackDurationProbe {
         // Si la première trame est au-delà de ce qu'on a téléchargé (gros tag ID3v2),
         // on récupère un second bloc directement à l'endroit des données audio.
         if (dataStart + 64 > head.length) {
+            // Requête followup : crée une nouvelle connexion qui réutilisera la socket
+            // du pool (keep-alive) au lieu de réutiliser baseConn qui a déjà été utilisée.
             d = rangeGet(url, authHeader, dataStart, HEAD_SIZE);
             if (d == null || d.length < 8) return 0L;
             searchStart = 0;
@@ -372,10 +451,15 @@ final class TrackDurationProbe {
     // ---------------------------------------------------------------------------------------------
 
     private static long parseMp4(String url, String authHeader, byte[] head, long fileSize) throws IOException {
+        return parseMp4(url, authHeader, head, fileSize, null);
+    }
+
+    private static long parseMp4(String url, String authHeader, byte[] head, long fileSize, HttpURLConnection baseConn) throws IOException {
         long offset = 0;
         int guard = 0;
         while (guard++ < 128) {
-            byte[] hdr = bytesAt(url, authHeader, head, offset, 16);
+            // Requêtes followup créent de nouvelles connexions (qui réutilisent la socket via keep-alive)
+            byte[] hdr = bytesAt(url, authHeader, head, offset, 16, null);
             if (hdr == null || hdr.length < 8) return 0L;
 
             long size = readUInt32(hdr, 0);
@@ -390,6 +474,7 @@ final class TrackDurationProbe {
 
             if ("moov".equals(type)) {
                 int cap = (int) Math.min(size, 1 << 20); // 1 Mo suffit largement pour mvhd
+                // Requête followup : crée une nouvelle connexion
                 byte[] moov = rangeGet(url, authHeader, offset, cap);
                 if (moov == null) return 0L;
                 return findMvhdDuration(moov);
@@ -403,11 +488,19 @@ final class TrackDurationProbe {
 
     /** Retourne 16 octets à partir de {@code offset}, depuis {@code head} si possible, sinon via HTTP. */
     private static byte[] bytesAt(String url, String authHeader, byte[] head, long offset, int len) throws IOException {
+        return bytesAt(url, authHeader, head, offset, len, null);
+    }
+
+    /** Retourne 16 octets à partir de {@code offset}, depuis {@code head} si possible, sinon via HTTP. */
+    private static byte[] bytesAt(String url, String authHeader, byte[] head, long offset, int len, HttpURLConnection baseConn) throws IOException {
         if (offset >= 0 && offset + len <= head.length) {
             byte[] out = new byte[len];
             System.arraycopy(head, (int) offset, out, 0, len);
             return out;
         }
+        // Les requêtes followup créent toujours une nouvelle connexion (qui réutilise
+        // la socket du pool grâce au keep-alive). On ne réutilise pas baseConn car il
+        // a déjà été utilisé pour la première requête Range.
         return rangeGet(url, authHeader, offset, len);
     }
 
@@ -451,6 +544,10 @@ final class TrackDurationProbe {
     // ---------------------------------------------------------------------------------------------
 
     private static long parseOgg(String url, String authHeader, byte[] head, long fileSize) throws IOException {
+        return parseOgg(url, authHeader, head, fileSize, null);
+    }
+
+    private static long parseOgg(String url, String authHeader, byte[] head, long fileSize, HttpURLConnection baseConn) throws IOException {
         int sampleRate = 0;
         boolean opus = false;
         int preSkip = 0;
@@ -477,6 +574,7 @@ final class TrackDurationProbe {
         // Le granule de la DERNIÈRE page OggS donne le nombre total d'échantillons.
         int tailLen = 65536;
         long tailStart = fileSize > tailLen ? fileSize - tailLen : 0;
+        // Requête followup : crée une nouvelle connexion qui réutilisera la socket
         byte[] tail = rangeGet(url, authHeader, tailStart, (int) Math.min(tailLen, fileSize > 0 ? fileSize : tailLen));
         if (tail == null || tail.length < 14) return 0L;
 
