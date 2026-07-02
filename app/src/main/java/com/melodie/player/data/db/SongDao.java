@@ -35,6 +35,12 @@ public interface SongDao {
     @Query("DELETE FROM songs WHERE source = 'LOCAL' AND folderSourceId NOT IN (:activeFolderSourceIds)")
     void deleteLocalSongsNotInFolderSources(List<Long> activeFolderSourceIds);
 
+    @Query("DELETE FROM songs WHERE id = :id")
+    void deleteById(String id);
+
+    @Query("SELECT * FROM songs WHERE id = :id LIMIT 1")
+    Song getById(String id);
+
     // Colonnes completes d'une Song en utilisant TOUJOURS la pochette de l'album (table albums)
     // comme source de verite, afin d'etre parfaitement synchronise avec les onglets Albums/Artists.
     // Fallback sur songs.cover uniquement si la chanson n'a pas de ligne album correspondante.
@@ -95,9 +101,6 @@ public interface SongDao {
             + "ORDER BY songs.title COLLATE NOCASE ASC LIMIT 100")
     LiveData<List<Song>> search(String q);
 
-    @Query("SELECT * FROM songs WHERE id = :id")
-    Song getById(String id);
-
     @Query("UPDATE songs SET favorite = :fav WHERE id = :id")
     void setFavorite(String id, boolean fav);
 
@@ -125,4 +128,3 @@ public interface SongDao {
         public String cover;
     }
 }
-

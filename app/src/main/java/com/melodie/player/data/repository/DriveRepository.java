@@ -10,12 +10,14 @@ import androidx.lifecycle.MutableLiveData;
 
 import com.melodie.player.data.db.DriveAudioDao;
 import com.melodie.player.data.db.DriveFolderDao;
+import com.melodie.player.data.db.DriveSyncStateDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.SongDao;
 import com.melodie.player.data.cover.CoverArtFetcher.DiscogsTrackInfo;
 import com.melodie.player.data.cover.CoverArtFetcher;
 import com.melodie.player.data.entity.DriveAudio;
 import com.melodie.player.data.entity.DriveFolder;
+import com.melodie.player.data.entity.DriveSyncState;
 import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Song;
 import com.google.android.gms.auth.GoogleAuthUtil;
@@ -30,8 +32,11 @@ import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
+import com.google.api.services.drive.model.Change;
+import com.google.api.services.drive.model.ChangeList;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
+import com.google.api.services.drive.model.StartPageToken;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -45,9 +50,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -61,9 +68,12 @@ public class DriveRepository {
 
     private static final String TAG = "DriveRepository";
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
+    private static final String DRIVE_SYNC_TAG = "DriveSync";
     private static final String DRIVE_AUDIO_CACHE_DIR = "drive_audio_cache";
     private static final String PREFS_DRIVE_AUTH = "drive_auth";
     private static final String KEY_DRIVE_ACCESS_TOKEN = "drive_access_token";
+    private static final String SYNC_KEY_START_PAGE_TOKEN = "sync_start_page_token";
+    private static final String SYNC_KEY_SELECTION_SIGNATURE = "sync_selection_signature";
 
     // Extraction des durées : nombre d'extractions réseau menées en parallèle.
     // Chaque extraction ne fait qu'une petite requête HTTP Range (16 Ko, keep-alive) ;
@@ -73,6 +83,7 @@ public class DriveRepository {
     private final Context context;
     private final DriveFolderDao driveFolderDao;
     private final DriveAudioDao driveAudioDao;
+    private final DriveSyncStateDao driveSyncStateDao;
     private final FolderSourceDao folderSourceDao;
     private final SongDao songDao;
     private final MusicRepository musicRepository;
@@ -97,6 +108,7 @@ public class DriveRepository {
     public DriveRepository(@ApplicationContext Context context,
                           DriveFolderDao driveFolderDao,
                           DriveAudioDao driveAudioDao,
+                          DriveSyncStateDao driveSyncStateDao,
                           FolderSourceDao folderSourceDao,
                           SongDao songDao,
                           MusicRepository musicRepository,
@@ -105,6 +117,7 @@ public class DriveRepository {
         this.context = context;
         this.driveFolderDao = driveFolderDao;
         this.driveAudioDao = driveAudioDao;
+        this.driveSyncStateDao = driveSyncStateDao;
         this.folderSourceDao = folderSourceDao;
         this.songDao = songDao;
         this.musicRepository = musicRepository;
@@ -114,6 +127,332 @@ public class DriveRepository {
         initializeGoogleSignIn();
         restorePersistedSession();
         refreshSessionSilentlyIfPossible();
+    }
+
+    private void bootstrapDriveSync(Map<DriveFolder, String> foldersToSync,
+                                    Map<String, FolderSource> sourceByRootDriveId,
+                                    String selectionSignature) throws IOException {
+        Map<String, Long> knownDurationsBySongId = new HashMap<>();
+        List<Song> previousDriveSongs = songDao.getBySourceSync(Song.SOURCE_DRIVE);
+        if (previousDriveSongs != null) {
+            for (Song existing : previousDriveSongs) {
+                if (existing == null || existing.id == null || existing.id.trim().isEmpty()) continue;
+                if (existing.duration > 0L) {
+                    knownDurationsBySongId.put(existing.id, existing.duration);
+                }
+            }
+        }
+
+        List<Song> driveSongs = new ArrayList<>();
+        long scanStartMs = System.currentTimeMillis();
+        int processedFolders = 0;
+        int foldersWithAudio = 0;
+        int durationFromDrive = 0;
+        int durationMissing = 0;
+        driveAudioDao.clear();
+        for (Map.Entry<DriveFolder, String> entry : foldersToSync.entrySet()) {
+            long folderStartMs = System.currentTimeMillis();
+            DriveFolder folder = entry.getKey();
+            String rootDriveId = entry.getValue();
+            FolderSource source = rootDriveId != null ? sourceByRootDriveId.get(rootDriveId) : null;
+            if (source == null || folder == null) {
+                continue;
+            }
+            List<DriveAudio> audioFiles = syncAudioFilesFromFolder(folder.driveId);
+            processedFolders++;
+            if (audioFiles == null || audioFiles.isEmpty()) {
+                Log.d(DRIVE_SYNC_TAG,
+                        "FOLDER_SYNC folder=" + folder.driveId
+                                + " files=0"
+                                + " ms=" + (System.currentTimeMillis() - folderStartMs));
+                continue;
+            }
+            foldersWithAudio++;
+
+            for (DriveAudio audio : audioFiles) {
+                Song song = buildDriveSong(folder, source, audio);
+                if (song == null) continue;
+                Long knownDuration = knownDurationsBySongId.get(song.id);
+                if (knownDuration != null && knownDuration > 0L && song.duration <= 0L) {
+                    song.duration = knownDuration;
+                }
+                if (song.duration > 0L) {
+                    durationFromDrive++;
+                } else {
+                    durationMissing++;
+                }
+                driveSongs.add(song);
+            }
+
+            Log.d(DRIVE_SYNC_TAG,
+                    "FOLDER_SYNC folder=" + folder.driveId
+                            + " files=" + audioFiles.size()
+                            + " ms=" + (System.currentTimeMillis() - folderStartMs));
+        }
+
+        // Remplacement atomique côté chansons Drive pour garantir un état cohérent après bootstrap.
+        songDao.deleteBySource(Song.SOURCE_DRIVE);
+        if (!driveSongs.isEmpty()) {
+            long upsertStartMs = System.currentTimeMillis();
+            songDao.insertAll(driveSongs);
+            Log.d(DRIVE_SYNC_TAG,
+                    "UPSERT_BATCH type=songs size=" + driveSongs.size()
+                            + " ms=" + (System.currentTimeMillis() - upsertStartMs));
+        }
+        musicRepository.rebuildAlbumsFromSongs();
+
+        String newStartPageToken = fetchDriveStartPageToken();
+        if (newStartPageToken != null && !newStartPageToken.trim().isEmpty()) {
+            putSyncState(SYNC_KEY_START_PAGE_TOKEN, newStartPageToken.trim());
+            Log.d(DRIVE_SYNC_TAG, "CURSOR_SAVE tokenLength=" + newStartPageToken.trim().length());
+        }
+        putSyncState(SYNC_KEY_SELECTION_SIGNATURE, selectionSignature);
+
+        long elapsed = System.currentTimeMillis() - scanStartMs;
+        Log.d(DRIVE_SYNC_TAG,
+                "SYNC_END mode=bootstrap folders=" + processedFolders
+                        + " foldersWithAudio=" + foldersWithAudio
+                        + " songs=" + driveSongs.size()
+                        + " durationDrive=" + durationFromDrive
+                        + " durationMissing=" + durationMissing
+                        + " totalMs=" + elapsed);
+    }
+
+    private void incrementalDriveSync(Map<DriveFolder, String> foldersToSync,
+                                      Map<String, FolderSource> sourceByRootDriveId,
+                                      String startPageToken,
+                                      String selectionSignature) throws IOException {
+        Map<String, DriveFolder> trackedFolderById = new HashMap<>();
+        Map<String, String> rootByFolderId = new HashMap<>();
+        for (Map.Entry<DriveFolder, String> entry : foldersToSync.entrySet()) {
+            DriveFolder folder = entry.getKey();
+            String rootDriveId = entry.getValue();
+            if (folder == null || folder.driveId == null) continue;
+            String folderId = folder.driveId.trim();
+            if (folderId.isEmpty()) continue;
+            trackedFolderById.put(folderId, folder);
+            if (rootDriveId != null && !rootDriveId.trim().isEmpty()) {
+                rootByFolderId.put(folderId, rootDriveId.trim());
+            }
+        }
+
+        if (trackedFolderById.isEmpty()) {
+            Log.w(DRIVE_SYNC_TAG, "SYNC_END mode=incremental reason=no_tracked_folders");
+            return;
+        }
+
+        SyncCounters counters = new SyncCounters();
+        String pageToken = startPageToken;
+        String newStartPageToken = null;
+        long syncStartMs = System.currentTimeMillis();
+        int pageIndex = 0;
+
+        do {
+            long pageStartMs = System.currentTimeMillis();
+            int beforeUpdated = counters.updated;
+            int beforeDeleted = counters.deleted;
+            int beforeIgnored = counters.ignored;
+            ChangeList page = driveService.changes().list(pageToken)
+                    .setSupportsAllDrives(true)
+                    .setIncludeItemsFromAllDrives(true)
+                    .setPageSize(1000)
+                    .setFields("nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,size,parents,md5Checksum,trashed,webContentLink))")
+                    .execute();
+
+            List<Change> changes = page != null ? page.getChanges() : null;
+            int changeCount = changes != null ? changes.size() : 0;
+            long pageMs = System.currentTimeMillis() - pageStartMs;
+            Log.d(DRIVE_SYNC_TAG,
+                    "CHANGES_PAGE page=" + pageIndex
+                            + " changes=" + changeCount
+                            + " updated=" + (counters.updated - beforeUpdated)
+                            + " deleted=" + (counters.deleted - beforeDeleted)
+                            + " ignored=" + (counters.ignored - beforeIgnored)
+                            + " ms=" + pageMs);
+
+            if (changes != null) {
+                for (Change change : changes) {
+                    applyDriveChange(change, trackedFolderById, rootByFolderId, sourceByRootDriveId, counters);
+                }
+            }
+
+            if (page != null && page.getNewStartPageToken() != null && !page.getNewStartPageToken().trim().isEmpty()) {
+                newStartPageToken = page.getNewStartPageToken().trim();
+            }
+
+            pageToken = page != null ? page.getNextPageToken() : null;
+            pageIndex++;
+        } while (pageToken != null && !pageToken.isEmpty());
+
+        if (newStartPageToken != null && !newStartPageToken.isEmpty()) {
+            putSyncState(SYNC_KEY_START_PAGE_TOKEN, newStartPageToken);
+        }
+        putSyncState(SYNC_KEY_SELECTION_SIGNATURE, selectionSignature);
+
+        if (counters.updated > 0 || counters.deleted > 0) {
+            musicRepository.rebuildAlbumsFromSongs();
+        }
+
+        long totalMs = System.currentTimeMillis() - syncStartMs;
+        Log.d(DRIVE_SYNC_TAG,
+                "SYNC_END mode=incremental totalMs=" + totalMs
+                        + " updated=" + counters.updated
+                        + " deleted=" + counters.deleted
+                        + " durationDrive=" + counters.durationFromDrive
+                        + " durationMissing=" + counters.durationMissing
+                        + " ignored=" + counters.ignored);
+    }
+
+    private void applyDriveChange(Change change,
+                                  Map<String, DriveFolder> trackedFolderById,
+                                  Map<String, String> rootByFolderId,
+                                  Map<String, FolderSource> sourceByRootDriveId,
+                                  SyncCounters counters) {
+        if (change == null || change.getFileId() == null || change.getFileId().trim().isEmpty()) {
+            counters.ignored++;
+            return;
+        }
+
+        String fileId = change.getFileId().trim();
+        if (change.getRemoved() != null && change.getRemoved()) {
+            removeDriveFile(fileId);
+            counters.deleted++;
+            return;
+        }
+
+        File file = change.getFile();
+        if (file == null || Boolean.TRUE.equals(file.getTrashed())) {
+            removeDriveFile(fileId);
+            counters.deleted++;
+            return;
+        }
+
+        String trackedFolderId = findTrackedFolderId(file, trackedFolderById.keySet());
+        if (trackedFolderId == null) {
+            // Le fichier existe mais ne fait plus partie de l'arborescence sélectionnée.
+            removeDriveFile(fileId);
+            counters.deleted++;
+            return;
+        }
+
+        if (!isAudioMimeType(file.getMimeType())) {
+            // Delta non audio dans un dossier suivi: pas de chanson locale à créer/mettre à jour.
+            counters.ignored++;
+            return;
+        }
+
+        DriveFolder folder = trackedFolderById.get(trackedFolderId);
+        String rootDriveId = rootByFolderId.get(trackedFolderId);
+        FolderSource source = rootDriveId != null ? sourceByRootDriveId.get(rootDriveId) : null;
+        if (folder == null || source == null) {
+            counters.ignored++;
+            return;
+        }
+
+        DriveAudio previous = driveAudioDao.getById(fileId);
+        DriveAudio audio = mapDriveFileToAudio(file, trackedFolderId, previous);
+        driveAudioDao.insert(audio);
+
+        Song song = buildDriveSong(folder, source, audio);
+        if (song != null) {
+            songDao.insert(song);
+            counters.updated++;
+            if (song.duration > 0L) {
+                counters.durationFromDrive++;
+            } else {
+                counters.durationMissing++;
+            }
+        } else {
+            counters.ignored++;
+        }
+    }
+
+    private DriveAudio mapDriveFileToAudio(File file, String folderId, DriveAudio previous) {
+        DriveAudio audio = new DriveAudio();
+        audio.fileId = file.getId() != null ? file.getId() : "";
+        audio.fileName = file.getName() != null ? file.getName() : "";
+        audio.folderId = folderId != null ? folderId : "";
+        audio.fileSize = file.getSize() != null ? file.getSize() : 0L;
+        audio.lastModified = file.getModifiedTime() != null ? file.getModifiedTime().getValue() : 0L;
+        audio.durationMs = 0L;
+        audio.trackNumber = 0;
+        Object musicMetaRaw = file.get("musicMetadata");
+        if (!(musicMetaRaw instanceof Map)) {
+            // Compatibilite defensive avec d'anciens payloads/tests.
+            musicMetaRaw = file.get("audioMediaMetadata");
+        }
+        if (musicMetaRaw instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> musicMeta = (Map<String, Object>) musicMetaRaw;
+            audio.durationMs = parseLongValue(musicMeta.get("durationMillis"));
+            audio.trackNumber = (int) parseLongValue(musicMeta.get("trackNumber"));
+        }
+        audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
+        audio.downloaded = previous != null && canReuseCachedFile(previous, audio);
+        audio.localPath = audio.downloaded && previous != null ? previous.localPath : "";
+        return audio;
+    }
+
+    private void removeDriveFile(String fileId) {
+        driveAudioDao.deleteById(fileId);
+        songDao.deleteById("D_" + fileId);
+    }
+
+    private String findTrackedFolderId(File file, Set<String> trackedFolderIds) {
+        if (file == null || trackedFolderIds == null || trackedFolderIds.isEmpty()) return null;
+        List<String> parents = file.getParents();
+        if (parents == null || parents.isEmpty()) return null;
+        for (String parent : parents) {
+            if (parent != null && trackedFolderIds.contains(parent)) {
+                return parent;
+            }
+        }
+        return null;
+    }
+
+    private boolean isAudioMimeType(String mimeType) {
+        if (mimeType == null || mimeType.trim().isEmpty()) return false;
+        String m = mimeType.trim().toLowerCase();
+        return m.startsWith("audio/")
+                || "application/ogg".equals(m)
+                || "application/x-flac".equals(m);
+    }
+
+    private String fetchDriveStartPageToken() throws IOException {
+        StartPageToken token = driveService.changes().getStartPageToken()
+                .setSupportsAllDrives(true)
+                .execute();
+        return token != null ? token.getStartPageToken() : null;
+    }
+
+    private String buildSelectionSignature(Set<String> rootDriveIds) {
+        if (rootDriveIds == null || rootDriveIds.isEmpty()) return "";
+        List<String> sorted = new ArrayList<>(rootDriveIds);
+        Collections.sort(sorted);
+        return String.join("|", sorted);
+    }
+
+    private String getSyncState(String key) {
+        DriveSyncState state = driveSyncStateDao.get(key);
+        if (state == null || state.value == null) return null;
+        return state.value;
+    }
+
+    private void putSyncState(String key, String value) {
+        if (key == null || key.trim().isEmpty()) return;
+        DriveSyncState state = new DriveSyncState();
+        state.key = key.trim();
+        state.value = value != null ? value : "";
+        state.updatedAt = System.currentTimeMillis();
+        driveSyncStateDao.upsert(state);
+    }
+
+    private static final class SyncCounters {
+        int updated;
+        int deleted;
+        int ignored;
+        int durationFromDrive;
+        int durationMissing;
     }
 
     private void initializeGoogleSignIn() {
@@ -357,63 +696,41 @@ public class DriveRepository {
                 // Les descendants héritent de la source de leur racine sélectionnée, sans apparaître séparément.
                 Map<String, FolderSource> sourceByRootDriveId = persistDriveFolderSources(selectedFolders, selectedById);
 
-                Map<String, Long> knownDurationsBySongId = new HashMap<>();
-                List<Song> previousDriveSongs = songDao.getBySourceSync(Song.SOURCE_DRIVE);
-                if (previousDriveSongs != null) {
-                    for (Song existing : previousDriveSongs) {
-                        if (existing == null || existing.id == null || existing.id.trim().isEmpty()) continue;
-                        if (existing.duration > 0L) {
-                            knownDurationsBySongId.put(existing.id, existing.duration);
-                        }
-                    }
-                }
-
-                List<Song> driveSongs = new ArrayList<>();
-
                 // Expansion récursive (comme Spiral Player) : cocher un dossier synchronise aussi
                 // TOUS ses sous-dossiers descendants, en héritant de la source du dossier coché.
                 Map<DriveFolder, String> foldersToSync = expandSelectedFoldersWithDescendants(selectedFolders, selectedById);
                 Log.d(TAG, "Sync targets after recursive expansion: " + foldersToSync.size()
                         + " folders (from " + selectedFolders.size() + " selected)");
 
-                for (Map.Entry<DriveFolder, String> entry : foldersToSync.entrySet()) {
-                    DriveFolder folder = entry.getKey();
-                    String rootDriveId = entry.getValue();
-                    FolderSource source = rootDriveId != null ? sourceByRootDriveId.get(rootDriveId) : null;
-                    if (source == null) {
-                        Log.w(TAG, "Skipping Drive folder without resolved root source: " + folder.driveId + " (root=" + rootDriveId + ")");
-                        continue;
-                    }
-                    List<DriveAudio> audioFiles = syncAudioFilesFromFolder(folder.driveId);
-                    if (audioFiles != null && !audioFiles.isEmpty()) {
-                        // Discogs duration lookup removed from sync path: it causes HTTP 429 storms
-                        // when syncing many folders, blocking the entire sync. Durations will be 0
-                        // initially (or restored from previous sync cache below).
-                        for (DriveAudio audio : audioFiles) {
-                            Song song = buildDriveSong(folder, source, audio);
-                            if (song != null) {
-                                // Restore previously known duration if available
-                                Long knownDuration = knownDurationsBySongId.get(song.id);
-                                if (knownDuration != null && knownDuration > 0L) {
-                                    song.duration = knownDuration;
-                                }
-                                driveSongs.add(song);
-                            }
-                        }
+                String currentSelectionSignature = buildSelectionSignature(sourceByRootDriveId.keySet());
+                String storedSelectionSignature = getSyncState(SYNC_KEY_SELECTION_SIGNATURE);
+                String startPageToken = getSyncState(SYNC_KEY_START_PAGE_TOKEN);
+
+                boolean forceBootstrap = startPageToken == null
+                        || startPageToken.trim().isEmpty()
+                        || !currentSelectionSignature.equals(storedSelectionSignature);
+
+                Log.d(DRIVE_SYNC_TAG,
+                        "SYNC_DECISION forceBootstrap=" + forceBootstrap
+                                + " tokenPresent=" + (startPageToken != null && !startPageToken.trim().isEmpty())
+                                + " selectionChanged=" + !currentSelectionSignature.equals(storedSelectionSignature)
+                                + " roots=" + sourceByRootDriveId.size());
+
+                if (forceBootstrap) {
+                    Log.d(DRIVE_SYNC_TAG, "SYNC_START mode=bootstrap roots=" + sourceByRootDriveId.size());
+                    bootstrapDriveSync(foldersToSync, sourceByRootDriveId, currentSelectionSignature);
+                } else {
+                    Log.d(DRIVE_SYNC_TAG, "SYNC_START mode=incremental roots=" + sourceByRootDriveId.size());
+                    try {
+                        incrementalDriveSync(foldersToSync, sourceByRootDriveId, startPageToken, currentSelectionSignature);
+                    } catch (GoogleJsonResponseException jsonException) {
+                        // Token invalide (ex: 410 Gone): on repart proprement en bootstrap.
+                        Log.w(DRIVE_SYNC_TAG,
+                                "Incremental cursor invalid, fallback to bootstrap: HTTP "
+                                        + jsonException.getStatusCode());
+                        bootstrapDriveSync(foldersToSync, sourceByRootDriveId, currentSelectionSignature);
                     }
                 }
-
-                // On remplace la bibliothèque Drive uniquement après une synchronisation réussie.
-                // Cela évite de tout effacer si une requête réseau échoue en cours de route.
-                driveAudioDao.clear();
-                songDao.deleteBySource(Song.SOURCE_DRIVE);
-
-                if (!driveSongs.isEmpty()) {
-                    songDao.insertAll(driveSongs);
-                    Log.d(TAG, "Drive sync complete: inserted " + driveSongs.size() + " songs");
-                }
-
-                musicRepository.rebuildAlbumsFromSongs();
             } catch (Exception e) {
                 Log.e(TAG, "Error syncing folders", e);
             } finally {
@@ -467,6 +784,9 @@ public class DriveRepository {
         final ExecutorService pool = Executors.newFixedThreadPool(DURATION_ENRICH_THREADS);
         final AtomicInteger remaining = new AtomicInteger(total);
         final AtomicInteger updated = new AtomicInteger(0);
+        final AtomicInteger failed = new AtomicInteger(0);
+        final AtomicLong totalProbeMs = new AtomicLong(0L);
+        final List<Long> probeLatenciesMs = Collections.synchronizedList(new ArrayList<>());
 
         for (Song song : pending) {
             final Song s = song;
@@ -480,7 +800,12 @@ public class DriveRepository {
                     String fileName = audio != null ? audio.fileName : s.title;
                     long fileSize = audio != null ? audio.fileSize : 0L;
 
+                    long probeStartMs = System.currentTimeMillis();
                     long durationMs = extractDriveDuration(fileId, fileName, fileSize, token);
+                    long probeMs = System.currentTimeMillis() - probeStartMs;
+                    totalProbeMs.addAndGet(probeMs);
+                    probeLatenciesMs.add(probeMs);
+
                     if (durationMs > 0L) {
                         songDao.updateDuration(s.id, durationMs);
                         if (audio != null) {
@@ -488,13 +813,23 @@ public class DriveRepository {
                             driveAudioDao.update(audio);
                         }
                         updated.incrementAndGet();
+                    } else {
+                        failed.incrementAndGet();
                     }
                 } catch (Exception e) {
+                    failed.incrementAndGet();
                     Log.w(TAG, "Duration task failed: " + e.getMessage());
                 } finally {
                     if (remaining.decrementAndGet() == 0) {
                         int done = updated.get();
-                        Log.d(TAG, "Duration enrichment done: " + done + "/" + total + " updated");
+                        long avgProbeMs = total > 0 ? totalProbeMs.get() / Math.max(total, 1) : 0L;
+                        long p95ProbeMs = percentile95(probeLatenciesMs);
+                        Log.d(DRIVE_SYNC_TAG,
+                                "DURATION_FALLBACK count=" + total
+                                        + " updated=" + done
+                                        + " failed=" + failed.get()
+                                        + " avgMs=" + avgProbeMs
+                                        + " p95Ms=" + p95ProbeMs);
                         if (done > 0) {
                             musicRepository.rebuildAlbumsFromSongs();
                         }
@@ -504,6 +839,19 @@ public class DriveRepository {
                 }
             });
         }
+    }
+
+    private long percentile95(List<Long> values) {
+        if (values == null || values.isEmpty()) return 0L;
+        List<Long> copy;
+        synchronized (values) {
+            copy = new ArrayList<>(values);
+        }
+        Collections.sort(copy);
+        int index = (int) Math.ceil(copy.size() * 0.95d) - 1;
+        if (index < 0) index = 0;
+        if (index >= copy.size()) index = copy.size() - 1;
+        return copy.get(index);
     }
 
     private String extractDriveFileIdFromSong(Song song) {
@@ -554,36 +902,84 @@ public class DriveRepository {
             }
         }
 
+        // Utilise "contains" pour couvrir tous les sous-types audio (audio/mpeg, audio/mp4,
+        // audio/flac, audio/ogg, audio/wav, audio/aac, audio/opus…).
+        // "audio/m4a" n'existe pas sur Drive : les fichiers .m4a ont le type "audio/mp4".
+        // On ajoute application/ogg et application/x-flac pour les cas edge (cohérent avec isAudioMimeType).
         String query = "'" + folderId + "' in parents and " +
-                "(mimeType='audio/mpeg' or mimeType='audio/wav' or mimeType='audio/ogg' or " +
-                "mimeType='audio/flac' or mimeType='audio/m4a') and trashed=false";
+                "(mimeType contains 'audio/' or mimeType = 'application/ogg' or mimeType = 'application/x-flac') " +
+                "and trashed=false";
 
-        // musicMetadata n'est pas supporté sur toutes les versions de l'API Drive.
-        // On utilise directement les champs de base pour éviter le double aller-retour systématique.
+        Log.d(DRIVE_SYNC_TAG, "AUDIO_QUERY folder=" + folderId + " q=" + query);
+
+        // Les champs audioMediaMetadata/musicMetadata ne sont pas garantis en Drive v3.
+        // On limite la requête aux champs stables et on enrichit la durée ensuite si besoin.
         // Pagination complète (comme Spiral Player) : on suit nextPageToken jusqu'à épuisement
         // pour ne PAS s'arrêter aux 1000 premiers fichiers d'un dossier volumineux.
         List<File> files = new ArrayList<>();
         String pageToken = null;
+        int pageIndex = 0;
         do {
+            long pageStartMs = System.currentTimeMillis();
             Drive.Files.List request = driveService.files().list()
                     .setQ(query)
                     .setSpaces("drive")
+                    .setCorpora("allDrives")
                     .setSupportsAllDrives(true)
                     .setIncludeItemsFromAllDrives(true)
-                    .setFields("nextPageToken,files(id,name,size,modifiedTime,webContentLink,mimeType)")
+                    .setFields("nextPageToken,files(id,name,mimeType,modifiedTime,size,parents,md5Checksum,trashed,webContentLink)")
                     .setPageSize(1000);
             if (pageToken != null && !pageToken.isEmpty()) {
                 request.setPageToken(pageToken);
             }
             FileList result = request.execute();
             List<File> pageFiles = result.getFiles();
+            int pageSize = pageFiles != null ? pageFiles.size() : 0;
+            long pageMs = System.currentTimeMillis() - pageStartMs;
+            Log.d(DRIVE_SYNC_TAG,
+                    "LIST_PAGE folder=" + folderId
+                            + " page=" + pageIndex
+                            + " files=" + pageSize
+                            + " ms=" + pageMs);
             if (pageFiles != null && !pageFiles.isEmpty()) {
                 files.addAll(pageFiles);
             }
             pageToken = result.getNextPageToken();
+            pageIndex++;
         } while (pageToken != null && !pageToken.isEmpty());
 
         Log.d(TAG, "Folder " + folderId + ": fetched " + files.size() + " audio files (paginated)");
+
+        // Diagnostic : si 0 fichiers audio trouvés, on requête TOUS les fichiers du dossier
+        // (sans filtre MIME) pour savoir si le dossier est vide ou si c'est un problème de type.
+        if (files.isEmpty()) {
+            try {
+                String diagQuery = "'" + folderId + "' in parents and trashed=false";
+                FileList diagResult = driveService.files().list()
+                        .setQ(diagQuery)
+                        .setSpaces("drive")
+                        .setCorpora("allDrives")
+                        .setSupportsAllDrives(true)
+                        .setIncludeItemsFromAllDrives(true)
+                        .setFields("files(id,name,mimeType)")
+                        .setPageSize(20)
+                        .execute();
+                List<File> diagFiles = diagResult.getFiles();
+                if (diagFiles == null || diagFiles.isEmpty()) {
+                    Log.w(DRIVE_SYNC_TAG, "FOLDER_EMPTY_DIAG folder=" + folderId + " totalFiles=0 → dossier vraiment vide");
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    for (File f : diagFiles) {
+                        sb.append(f.getName()).append("(").append(f.getMimeType()).append(") ");
+                    }
+                    Log.w(DRIVE_SYNC_TAG, "FOLDER_EMPTY_DIAG folder=" + folderId
+                            + " totalFiles=" + diagFiles.size()
+                            + " → MIME types présents: " + sb);
+                }
+            } catch (Exception diagEx) {
+                Log.w(DRIVE_SYNC_TAG, "FOLDER_EMPTY_DIAG failed: " + diagEx.getMessage());
+            }
+        }
 
         driveAudioDao.deleteByFolder(folderId);
 
@@ -1417,6 +1813,7 @@ public class DriveRepository {
         executor.execute(() -> {
             driveFolderDao.deleteAll();
             driveAudioDao.clear();
+            driveSyncStateDao.clear();
             songDao.deleteBySource(Song.SOURCE_DRIVE);
             musicRepository.rebuildAlbumsFromSongs();
         });

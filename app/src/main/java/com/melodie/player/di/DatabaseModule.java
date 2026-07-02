@@ -8,6 +8,7 @@ import com.melodie.player.data.db.AlbumDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.DriveAudioDao;
 import com.melodie.player.data.db.DriveFolderDao;
+import com.melodie.player.data.db.DriveSyncStateDao;
 import com.melodie.player.data.db.MelodieDatabase;
 import com.melodie.player.data.db.PlaylistDao;
 import com.melodie.player.data.db.SongDao;
@@ -61,5 +62,9 @@ public class DatabaseModule {
     public FolderSourceDao provideFolderSourceDao(MelodieDatabase db) {
         return db.folderSourceDao();
     }
-}
 
+    @Provides
+    public DriveSyncStateDao provideDriveSyncStateDao(MelodieDatabase db) {
+        return db.driveSyncStateDao();
+    }
+}

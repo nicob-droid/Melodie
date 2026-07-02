@@ -10,10 +10,11 @@ import com.melodie.player.data.entity.DriveFolder;
 import com.melodie.player.data.entity.Playlist;
 import com.melodie.player.data.entity.PlaylistSong;
 import com.melodie.player.data.entity.Song;
+import com.melodie.player.data.entity.DriveSyncState;
 
 @Database(
-        entities = {Song.class, Album.class, Playlist.class, PlaylistSong.class, DriveFolder.class, DriveAudio.class, FolderSource.class},
-        version = 10,
+        entities = {Song.class, Album.class, Playlist.class, PlaylistSong.class, DriveFolder.class, DriveAudio.class, FolderSource.class, DriveSyncState.class},
+        version = 11,
         exportSchema = false
 )
 public abstract class MelodieDatabase extends RoomDatabase {
@@ -28,5 +29,6 @@ public abstract class MelodieDatabase extends RoomDatabase {
     public abstract DriveAudioDao driveAudioDao();
 
     public abstract FolderSourceDao folderSourceDao();
-}
 
+    public abstract DriveSyncStateDao driveSyncStateDao();
+}
