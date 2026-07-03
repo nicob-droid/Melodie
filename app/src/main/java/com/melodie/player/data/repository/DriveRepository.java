@@ -1388,6 +1388,7 @@ public class DriveRepository {
         if (v.isEmpty()) return v;
 
         v = v.replaceFirst("^(?i)track\\s*\\d{1,3}\\s*[-_.)]\\s*", "");
+        v = v.replaceFirst("^\\d{1,2}\\s*[-_.]\\s*\\d{1,3}\\s*[-_.)]?\\s*", "");
         v = v.replaceFirst("^\\d{1,3}\\s*[-_.)]\\s*", "");
         v = v.replaceFirst("^\\d{1,3}\\s+", "");
         return v.trim();
@@ -1417,6 +1418,35 @@ public class DriveRepository {
         if (value == null) return 0;
         String v = value.trim();
         if (v.isEmpty()) return 0;
+
+        // Supporte les préfixes "disque-piste" (ex: "1-01", "2.07", "1_12").
+        // Dans ce cas, on retient la partie piste (01, 07, 12) pour l'ordre d'album.
+        int firstEnd = 0;
+        while (firstEnd < v.length() && Character.isDigit(v.charAt(firstEnd)) && firstEnd < 2) {
+            firstEnd++;
+        }
+        if (firstEnd >= 1 && firstEnd <= 2 && firstEnd < v.length()) {
+            char sep = v.charAt(firstEnd);
+            if (sep == '-' || sep == '.' || sep == '_') {
+                int secondStart = firstEnd + 1;
+                while (secondStart < v.length() && Character.isWhitespace(v.charAt(secondStart))) {
+                    secondStart++;
+                }
+                int secondEnd = secondStart;
+                while (secondEnd < v.length()
+                        && Character.isDigit(v.charAt(secondEnd))
+                        && (secondEnd - secondStart) < 3) {
+                    secondEnd++;
+                }
+                if (secondEnd > secondStart) {
+                    try {
+                        return Integer.parseInt(v.substring(secondStart, secondEnd));
+                    } catch (Exception ignored) {
+                        // Continue vers le parsing simple ci-dessous.
+                    }
+                }
+            }
+        }
 
         int i = 0;
         while (i < v.length() && Character.isDigit(v.charAt(i)) && i < 3) {
