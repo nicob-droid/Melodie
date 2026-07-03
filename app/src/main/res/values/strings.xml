@@ -46,7 +46,6 @@
     <string name="folders_drive_sign_in_required">Connecte-toi à Google Drive pour ajouter une source.</string>
     <string name="folders_drive_empty_open_drive">Aucun dossier Drive chargé. Ouvre Google Drive pour synchroniser.</string>
     <string name="folders_drive_sources_added">Sources Google Drive ajoutées.</string>
-    <string name="folders_resync_drive">Resynchroniser Google Drive</string>
 
     <!-- Lecteur -->
     <string name="player_play">Lecture</string>
@@ -84,8 +83,8 @@
     <string name="drive_sign_in">Se connecter avec Google</string>
     <string name="drive_section_my_drive">Mon Drive</string>
     <string name="drive_section_shared">Lecteurs partagés</string>
-    <string name="drive_loading_folders">Analyse de votre Google Drive en cours...</string>
-    <string name="drive_sync_and_add_sources_started">Sources Drive ajoutées. Synchronisation en cours...</string>
+    <string name="drive_loading_folders">Analyse de votre Google Drive en cours</string>
+    <string name="drive_sync_and_add_sources_started">Sources Drive ajoutées. Synchronisation en cours.</string>
 
     <!-- Égaliseur -->
     <string name="eq_preset">Préréglage</string>
@@ -126,7 +125,7 @@
     <string name="playlist_track_added">Morceau ajouté à la playlist</string>
     <string name="playlist_play">Lire</string>
     <string name="playlist_shuffle">Lecture aléatoire</string>
-    <string name="playlist_empty_tracks">Cette playlist est vide. Ajoute des morceaux depuis le menu d un titre.</string>
+    <string name="playlist_empty_tracks">Cette playlist est vide. Ajoute des morceaux depuis le menu d\'un titre.</string>
     <string name="playlist_remove_track">Retirer de la playlist</string>
     <string name="playlist_rename">Renommer</string>
     <string name="playlist_delete">Supprimer</string>

@@ -46,7 +46,6 @@
     <string name="folders_drive_sign_in_required">Sign in to Google Drive to add a source.</string>
     <string name="folders_drive_empty_open_drive">No Drive folder loaded yet. Open Google Drive to sync first.</string>
     <string name="folders_drive_sources_added">Google Drive sources added.</string>
-    <string name="folders_resync_drive">Resync Google Drive</string>
 
     <!-- Player -->
     <string name="player_play">Play</string>
@@ -84,8 +83,8 @@
     <string name="drive_sign_in">Sign in with Google</string>
     <string name="drive_section_my_drive">My Drive</string>
     <string name="drive_section_shared">Shared drives</string>
-    <string name="drive_loading_folders">Checking your Google Drive folders...</string>
-    <string name="drive_sync_and_add_sources_started">Drive sources added. Sync in progress...</string>
+    <string name="drive_loading_folders">Checking your Google Drive folders</string>
+    <string name="drive_sync_and_add_sources_started">Drive sources added. Sync in progress.</string>
 
     <!-- Equalizer -->
     <string name="eq_preset">Preset</string>
@@ -107,6 +106,10 @@
     <string name="unknown_artist">Unknown artist</string>
     <string name="unknown_album">Unknown album</string>
     <string name="release_date_unknown">Unknown</string>
+    <string name="album_source_badge_local">Local album</string>
+    <string name="album_source_badge_drive">Google Drive album</string>
+    <string name="album_source_badge_mixed">Mixed-source album</string>
+    <string name="album_source_badge_unknown">Unknown source</string>
     <string name="artist_song_count">%1$d tracks</string>
     <string name="song_more_actions">Track actions</string>
 
