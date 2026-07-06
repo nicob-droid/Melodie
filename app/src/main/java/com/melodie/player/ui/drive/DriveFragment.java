@@ -47,6 +47,7 @@ public class DriveFragment extends Fragment {
     private boolean hasRequestedFolderRefresh;
     private boolean waitingForFreshFolders;
     private boolean isDriveLoading;
+    private boolean prevIsDriveLoading; // pour détecter la transition true→false
     private boolean isDriveLoggedIn;
     private boolean isDriveApiDisabled;
     private java.util.List<DriveFolder> pendingFolders;
@@ -134,10 +135,16 @@ public class DriveFragment extends Fragment {
         });
 
         viewModel.getIsLoading().observe(getViewLifecycleOwner(), isLoading -> {
+            boolean wasLoading = prevIsDriveLoading;
+            prevIsDriveLoading = isLoading;
             isDriveLoading = isLoading;
             progressBar.setVisibility(isLoading ? View.VISIBLE : View.GONE);
-            if (!isLoading && waitingForFreshFolders) {
-                waitingForFreshFolders = false;
+            // On ne soumet les dossiers en attente que lors d'une vraie transition
+            // loading=true → loading=false (pas lors de la livraison initiale de la valeur).
+            if (!isLoading && wasLoading) {
+                if (waitingForFreshFolders) {
+                    waitingForFreshFolders = false;
+                }
                 folderAdapter.submitFolders(pendingFolders);
                 pendingFolders = null;
             }
@@ -215,7 +222,7 @@ public class DriveFragment extends Fragment {
 
         boolean showPlaceholder = waitingForFreshFolders || isDriveLoading;
         loadingHintView.setVisibility(showPlaceholder ? View.VISIBLE : View.GONE);
-        recyclerView.setVisibility(showPlaceholder ? View.INVISIBLE : View.VISIBLE);
+        recyclerView.setVisibility(showPlaceholder ? View.GONE : View.VISIBLE);
     }
 
     private void updateSyncButtonState() {

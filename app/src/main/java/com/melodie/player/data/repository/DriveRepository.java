@@ -2,7 +2,6 @@ package com.melodie.player.data.repository;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.media.MediaMetadataRetriever;
 import android.util.Log;
 
 import androidx.lifecycle.LiveData;
@@ -13,7 +12,6 @@ import com.melodie.player.data.db.DriveFolderDao;
 import com.melodie.player.data.db.DriveSyncStateDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.SongDao;
-import com.melodie.player.data.cover.CoverArtFetcher.DiscogsTrackInfo;
 import com.melodie.player.data.cover.CoverArtFetcher;
 import com.melodie.player.data.entity.DriveAudio;
 import com.melodie.player.data.entity.DriveFolder;
@@ -36,11 +34,10 @@ import com.google.api.services.drive.model.Change;
 import com.google.api.services.drive.model.ChangeList;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
+import com.google.api.services.drive.model.DriveList;
 import com.google.api.services.drive.model.StartPageToken;
 
 import java.io.IOException;
-import java.io.OutputStream;
-import java.io.FileOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -74,11 +71,23 @@ public class DriveRepository {
     private static final String KEY_DRIVE_ACCESS_TOKEN = "drive_access_token";
     private static final String SYNC_KEY_START_PAGE_TOKEN = "sync_start_page_token";
     private static final String SYNC_KEY_SELECTION_SIGNATURE = "sync_selection_signature";
+    private static final String SYNC_KEY_METADATA_VERSION = "sync_metadata_version";
+    // Incrémenter cette valeur force un bootstrap unique pour ré-enrichir la bibliothèque
+    // Drive existante (ex: lorsqu'on améliore la lecture des balises embarquées ou la logique
+    // de repli par nom de dossier).
+    private static final String METADATA_SCHEMA_VERSION = "3";
+    // Artiste par défaut quand aucune balise n'est disponible : on ne devine JAMAIS l'artiste
+    // à partir des noms de fichiers/dossiers (source de confusion), on affiche « Artiste inconnu ».
+    private static final String UNKNOWN_ARTIST = "Artiste inconnu";
 
     // Extraction des durées : nombre d'extractions réseau menées en parallèle.
     // Chaque extraction ne fait qu'une petite requête HTTP Range (16 Ko, keep-alive) ;
     // concurrence modérée pour rester rapide sans se faire throttler par Google Drive.
     private static final int DURATION_ENRICH_THREADS = 8;
+
+    // Découverte « Partagé avec moi » : nombre de dossiers parents interrogés par requête
+    // (BFS par niveau groupé) pour limiter le nombre d'allers-retours réseau.
+    private static final int SWM_PARENTS_PER_QUERY = 40;
 
     private final Context context;
     private final DriveFolderDao driveFolderDao;
@@ -175,10 +184,10 @@ public class DriveRepository {
             }
             List<DriveAudio> audioFiles = syncAudioFilesFromFolder(folder.driveId);
             processedFolders++;
-            tracksDiscovered += audioFiles != null ? audioFiles.size() : 0;
+            tracksDiscovered += audioFiles.size();
 
             List<Song> folderSongs = new ArrayList<>();
-            if (audioFiles == null || audioFiles.isEmpty()) {
+            if (audioFiles.isEmpty()) {
                 Log.d(DRIVE_SYNC_TAG,
                         "FOLDER_SYNC folder=" + folder.driveId
                                 + " files=0"
@@ -428,27 +437,9 @@ public class DriveRepository {
         audio.durationMs = extractDurationFromDriveMetadata(file);
         audio.trackNumber = extractTrackNumberFromDriveMetadata(file);
         audio.webContentLink = file.getWebContentLink() != null ? file.getWebContentLink() : "";
-        audio.downloaded = previous != null && canReuseCachedFile(previous, audio);
-        audio.localPath = audio.downloaded && previous != null ? previous.localPath : "";
+        audio.downloaded = canReuseCachedFile(previous, audio);
+        audio.localPath = audio.downloaded ? previous.localPath : "";
         return audio;
-    }
-
-    private long probeDurationInline(DriveAudio audio) {
-        if (audio == null || audio.fileId == null || audio.fileId.trim().isEmpty()) return 0L;
-        if (audio.durationMs > 0L) return audio.durationMs;
-        String token = driveAccessToken;
-        if (token == null || token.trim().isEmpty()) return 0L;
-
-        try {
-            long duration = extractDriveDuration(audio.fileId, audio.fileName, audio.fileSize, token);
-            if (duration > 0L) {
-                audio.durationMs = duration;
-                return duration;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Inline duration probe failed for " + audio.fileId + ": " + e.getMessage());
-        }
-        return 0L;
     }
 
     private void removeDriveFile(String fileId) {
@@ -513,7 +504,7 @@ public class DriveRepository {
 
     private String getSyncState(String key) {
         DriveSyncState state = driveSyncStateDao.get(key);
-        if (state == null || state.value == null) return null;
+        if (state == null) return null;
         return state.value;
     }
 
@@ -605,6 +596,33 @@ public class DriveRepository {
                 Log.d(TAG, "Starting to list Drive folders...");
                 isLoading.postValue(true);
 
+                // Conserve les sélections visibles déjà présentes avant de rafraîchir complètement la table.
+                Set<String> previouslySelectedDriveIds = new HashSet<>();
+                List<DriveFolder> previouslySelectedFolders = driveFolderDao.getSelected();
+                if (previouslySelectedFolders != null) {
+                    for (DriveFolder selectedFolder : previouslySelectedFolders) {
+                        if (selectedFolder == null) continue;
+                        String selectedId = selectedFolder.driveId.trim();
+                        if (!selectedId.isEmpty()) {
+                            previouslySelectedDriveIds.add(selectedId);
+                        }
+                    }
+                }
+
+                // Ensemble de TOUS les dossiers déjà connus (avant re-listing). Sert à distinguer
+                // les dossiers réellement NOUVEAUX (à auto-sélectionner sous une source) des
+                // dossiers que l'utilisateur a explicitement DÉCOCHÉS (à ne pas re-cocher).
+                Set<String> previouslyKnownDriveIds = new HashSet<>();
+                List<DriveFolder> previouslyKnownFolders = driveFolderDao.getAllSync();
+                if (previouslyKnownFolders != null) {
+                    for (DriveFolder known : previouslyKnownFolders) {
+                        if (known == null) continue;
+                        String knownId = known.driveId.trim();
+                        if (!knownId.isEmpty()) previouslyKnownDriveIds.add(knownId);
+                    }
+                }
+
+                // ── 1. Mon Drive ────────────────────────────────────────────────────────
                 // Root de Mon Drive (ancre de filtrage d'ascendance)
                 String rootId = driveService.files()
                         .get("root")
@@ -613,57 +631,199 @@ public class DriveRepository {
                         .execute()
                         .getId();
 
-                // Charge tous les dossiers accessibles. Le classement Mon Drive / Lecteurs partagés
-                // est fait ensuite à partir de l'ascendance et du driveId.
-                String query = "mimeType='application/vnd.google-apps.folder' and trashed=false";
-                List<File> files = new ArrayList<>();
+                String myDriveQuery = "mimeType='application/vnd.google-apps.folder' and trashed=false";
+                List<File> myDriveRawFiles = new ArrayList<>();
                 String pageToken = null;
                 do {
                     Drive.Files.List request = driveService.files().list()
-                            .setQ(query)
+                            .setQ(myDriveQuery)
                             .setSpaces("drive")
-                            .setCorpora("allDrives")
-                            .setSupportsAllDrives(true)
-                            .setIncludeItemsFromAllDrives(true)
-                            .setFields("nextPageToken,files(id,name,parents,modifiedTime,driveId)")
+                            .setCorpora("user")
+                            .setFields("nextPageToken,files(id,name,parents,modifiedTime)")
                             .setPageSize(1000);
-                    if (pageToken != null && !pageToken.isEmpty()) {
-                        request.setPageToken(pageToken);
-                    }
+                    if (pageToken != null) request.setPageToken(pageToken);
                     FileList page = request.execute();
-                    if (page.getFiles() != null) {
-                        files.addAll(page.getFiles());
-                    }
+                    if (page.getFiles() != null) myDriveRawFiles.addAll(page.getFiles());
                     pageToken = page.getNextPageToken();
                 } while (pageToken != null && !pageToken.isEmpty());
 
-                Map<String, String> parentById = new HashMap<>();
-                for (File f : files) {
+                Map<String, String> myDriveParentById = new HashMap<>();
+                for (File f : myDriveRawFiles) {
                     String pid = (f.getParents() != null && !f.getParents().isEmpty())
-                            ? f.getParents().get(0)
-                            : "";
-                    parentById.put(f.getId(), pid);
+                            ? f.getParents().get(0) : "";
+                    myDriveParentById.put(f.getId(), pid);
                 }
 
-                Set<String> knownIds = new HashSet<>(parentById.keySet());
-
-                // Conserve les dossiers de Mon Drive dont l'ascendance remonte jusqu'au root de Mon Drive.
                 List<File> myDriveFiles = new ArrayList<>();
-                List<File> sharedDriveFiles = new ArrayList<>();
-                for (File file : files) {
-                    if (isUnderMyDriveRoot(file.getId(), parentById, rootId)) {
+                for (File file : myDriveRawFiles) {
+                    if (isUnderMyDriveRoot(file.getId(), myDriveParentById, rootId)) {
                         myDriveFiles.add(file);
-                    } else if (isSharedDriveFolder(file, parentById, rootId, knownIds)) {
-                        sharedDriveFiles.add(file);
                     }
                 }
 
-                Log.d(TAG, "Found " + myDriveFiles.size() + " My Drive folders and "
-                        + sharedDriveFiles.size() + " shared-drive folders");
+                // Reconstruire parentById uniquement sur les dossiers retenus de Mon Drive
+                Map<String, String> parentById = new HashMap<>();
+                for (File f : myDriveFiles) {
+                    String pid = (f.getParents() != null && !f.getParents().isEmpty())
+                            ? f.getParents().get(0) : "";
+                    parentById.put(f.getId(), pid);
+                }
 
-                // Ne vide la table que si l'API a retourné au moins un dossier, pour ne pas
-                // effacer la liste si la réponse est vide suite à un problème temporaire.
-                if (!myDriveFiles.isEmpty() || !sharedDriveFiles.isEmpty()) {
+                // ── 2. Lecteurs partagés (Shared Drives) ──────────────────────────────
+                // Énumération explicite via drives().list() pour une détection fiable.
+                List<File> sharedDriveFiles = new ArrayList<>();
+                Map<String, String> sharedParentById = new HashMap<>();
+                // Déclaré hors du try pour être accessible lors de l'insertion des racines.
+                List<com.google.api.services.drive.model.Drive> sharedDrives = new ArrayList<>();
+                try {
+                    String drivePageToken = null;
+                    do {
+                        Drive.Drives.List drivesRequest = driveService.drives().list()
+                                .setFields("nextPageToken,drives(id,name)")
+                                .setPageSize(100);
+                        if (drivePageToken != null) drivesRequest.setPageToken(drivePageToken);
+                        DriveList drivesPage = drivesRequest.execute();
+                        if (drivesPage.getDrives() != null) sharedDrives.addAll(drivesPage.getDrives());
+                        drivePageToken = drivesPage.getNextPageToken();
+                    } while (drivePageToken != null && !drivePageToken.isEmpty());
+
+                    Log.d(TAG, "Found " + sharedDrives.size() + " Shared Drive(s)");
+
+                    for (com.google.api.services.drive.model.Drive sharedDrive : sharedDrives) {
+                        String sdId = sharedDrive.getId();
+                        String sdPageToken = null;
+                        do {
+                            Drive.Files.List sdRequest = driveService.files().list()
+                                    .setQ("mimeType='application/vnd.google-apps.folder' and trashed=false")
+                                    .setSpaces("drive")
+                                    .setCorpora("drive")
+                                    .setDriveId(sdId)
+                                    .setSupportsAllDrives(true)
+                                    .setIncludeItemsFromAllDrives(true)
+                                    .setFields("nextPageToken,files(id,name,parents,modifiedTime)")
+                                    .setPageSize(1000);
+                            if (sdPageToken != null) sdRequest.setPageToken(sdPageToken);
+                            FileList sdPage = sdRequest.execute();
+                            if (sdPage.getFiles() != null) {
+                                for (File f : sdPage.getFiles()) {
+                                    sharedDriveFiles.add(f);
+                                    String pid = (f.getParents() != null && !f.getParents().isEmpty())
+                                            ? f.getParents().get(0) : "";
+                                    sharedParentById.put(f.getId(), pid);
+                                }
+                            }
+                            sdPageToken = sdPage.getNextPageToken();
+                        } while (sdPageToken != null && !sdPageToken.isEmpty());
+                        Log.d(TAG, "Shared Drive '" + sharedDrive.getName() + "': loaded folders");
+                    }
+                } catch (Exception sdEx) {
+                    Log.w(TAG, "Could not list Shared Drives (may not be available for this account)", sdEx);
+                }
+
+                // ── 3. « Partagé avec moi » (Shared with me) ──────────────────────────
+                // Les comptes Gmail personnels n'ont PAS de Lecteurs partagés (fonctionnalité
+                // Google Workspace). En revanche, ils peuvent recevoir des dossiers partagés
+                // directement. On les récupère via le filtre sharedWithMe=true, puis on
+                // descend récursivement (BFS) pour reconstituer toute l'arborescence.
+                List<File> sharedWithMeFiles = new ArrayList<>();
+                Map<String, String> sharedWithMeParentById = new HashMap<>();
+                try {
+                    String swmQuery = "sharedWithMe=true and "
+                            + "mimeType='application/vnd.google-apps.folder' and trashed=false";
+                    List<File> swmRoots = new ArrayList<>();
+                    String swmPageToken = null;
+                    do {
+                        Drive.Files.List req = driveService.files().list()
+                                .setQ(swmQuery)
+                                .setSupportsAllDrives(true)
+                                .setIncludeItemsFromAllDrives(true)
+                                .setFields("nextPageToken,files(id,name,parents,modifiedTime)")
+                                .setPageSize(1000);
+                        if (swmPageToken != null) req.setPageToken(swmPageToken);
+                        FileList page = req.execute();
+                        if (page.getFiles() != null) swmRoots.addAll(page.getFiles());
+                        swmPageToken = page.getNextPageToken();
+                    } while (swmPageToken != null && !swmPageToken.isEmpty());
+
+                    Log.d(TAG, "Found " + swmRoots.size() + " 'Shared with me' root folder(s)");
+
+                    // Racines partagées : parentDriveId forcé à "" (leur vrai parent appartient
+                    // au propriétaire d'origine et n'est pas visible dans notre dataset).
+                    Set<String> visitedSwm = new HashSet<>();
+                    List<String> currentLevel = new ArrayList<>();
+                    for (File root : swmRoots) {
+                        if (root.getId() == null || !visitedSwm.add(root.getId())) continue;
+                        sharedWithMeFiles.add(root);
+                        sharedWithMeParentById.put(root.getId(), "");
+                        currentLevel.add(root.getId());
+                    }
+
+                    // BFS par NIVEAU avec requêtes GROUPÉES : au lieu d'une requête réseau par
+                    // dossier (très lent), on interroge jusqu'à SWM_PARENTS_PER_QUERY parents à la
+                    // fois via "('id1' in parents or 'id2' in parents or …)". On divise ainsi le
+                    // nombre d'allers-retours réseau par ~40.
+                    while (!currentLevel.isEmpty()) {
+                        List<String> nextLevel = new ArrayList<>();
+                        for (int start = 0; start < currentLevel.size(); start += SWM_PARENTS_PER_QUERY) {
+                            int end = Math.min(start + SWM_PARENTS_PER_QUERY, currentLevel.size());
+                            List<String> batch = currentLevel.subList(start, end);
+                            Set<String> batchSet = new HashSet<>(batch);
+
+                            StringBuilder q = new StringBuilder("(");
+                            for (int i = 0; i < batch.size(); i++) {
+                                if (i > 0) q.append(" or ");
+                                q.append("'").append(batch.get(i)).append("' in parents");
+                            }
+                            q.append(") and mimeType='application/vnd.google-apps.folder' and trashed=false");
+
+                            String childPageToken = null;
+                            do {
+                                Drive.Files.List req = driveService.files().list()
+                                        .setQ(q.toString())
+                                        .setSupportsAllDrives(true)
+                                        .setIncludeItemsFromAllDrives(true)
+                                        .setFields("nextPageToken,files(id,name,parents,modifiedTime)")
+                                        .setPageSize(1000);
+                                if (childPageToken != null) req.setPageToken(childPageToken);
+                                FileList page = req.execute();
+                                if (page.getFiles() != null) {
+                                    for (File child : page.getFiles()) {
+                                        if (child.getId() == null || !visitedSwm.add(child.getId())) continue;
+                                        // Parent effectif = celui du lot courant (un fichier peut
+                                        // avoir plusieurs parents ; on retient celui qu'on interroge).
+                                        String effectiveParent = "";
+                                        if (child.getParents() != null) {
+                                            for (String p : child.getParents()) {
+                                                if (batchSet.contains(p)) { effectiveParent = p; break; }
+                                            }
+                                        }
+                                        sharedWithMeFiles.add(child);
+                                        sharedWithMeParentById.put(child.getId(), effectiveParent);
+                                        nextLevel.add(child.getId());
+                                    }
+                                }
+                                childPageToken = page.getNextPageToken();
+                            } while (childPageToken != null && !childPageToken.isEmpty());
+                        }
+                        currentLevel = nextLevel;
+                    }
+                } catch (Exception swmEx) {
+                    Log.w(TAG, "Could not list 'Shared with me' folders", swmEx);
+                }
+
+                // Fusionner les parentById
+                parentById.putAll(sharedParentById);
+                parentById.putAll(sharedWithMeParentById);
+
+                Log.d(TAG, "Found " + myDriveFiles.size() + " My Drive folders, "
+                        + sharedDriveFiles.size() + " shared-drive folders, "
+                        + sharedWithMeFiles.size() + " shared-with-me folders");
+
+                // Ne vide la table que si l'API a retourné au moins un dossier, un drive partagé
+                // ou un dossier « partagé avec moi », pour ne pas effacer la liste si la réponse
+                // est vide suite à un problème temporaire.
+                if (!myDriveFiles.isEmpty() || !sharedDriveFiles.isEmpty()
+                        || !sharedDrives.isEmpty() || !sharedWithMeFiles.isEmpty()) {
                     driveFolderDao.deleteAll();
                 } else {
                     Log.w(TAG, "Drive API returned 0 folders – skipping deleteAll to preserve cached list");
@@ -681,6 +841,25 @@ public class DriveRepository {
                     Log.d(TAG, "Added My Drive folder: " + folder.name + " parent=" + parentId);
                 }
 
+                // Insère d'abord les conteneurs de drives partagés comme nœuds racines.
+                // Leurs sous-dossiers ont déjà le conteneur comme parentDriveId (retourné par
+                // l'API Drive), donc la hiérarchie s'auto-construit dans l'adaptateur.
+                for (com.google.api.services.drive.model.Drive sd : sharedDrives) {
+                    if (sd.getId() == null || sd.getId().trim().isEmpty()) continue;
+                    DriveFolder sdContainer = new DriveFolder();
+                    sdContainer.driveId = sd.getId().trim();
+                    sdContainer.name = sd.getName() != null && !sd.getName().trim().isEmpty()
+                            ? sd.getName().trim() : sd.getId().trim();
+                    sdContainer.parentDriveId = "";   // racine absolue — pas de parent
+                    sdContainer.isSharedDrive = true;
+                    sdContainer.lastSync = System.currentTimeMillis();
+                    // Restaure l'état sélectionné si ce drive était déjà coché avant le refresh.
+                    sdContainer.selected = previouslySelectedDriveIds.contains(sdContainer.driveId);
+                    driveFolderDao.insert(sdContainer);
+                    Log.d(TAG, "Added Shared Drive container: " + sdContainer.name
+                            + " id=" + sdContainer.driveId);
+                }
+
                 for (File file : sharedDriveFiles) {
                     DriveFolder folder = new DriveFolder();
                     folder.driveId = file.getId();
@@ -692,6 +871,25 @@ public class DriveRepository {
                     driveFolderDao.insert(folder);
                     Log.d(TAG, "Added Shared Drive folder: " + folder.name + " parent=" + parentId);
                 }
+
+                // Dossiers « Partagé avec moi » : classés dans la section Lecteurs partagés.
+                for (File file : sharedWithMeFiles) {
+                    DriveFolder folder = new DriveFolder();
+                    folder.driveId = file.getId();
+                    folder.name = file.getName();
+                    String parentId = sharedWithMeParentById.getOrDefault(file.getId(), "");
+                    folder.parentDriveId = parentId;
+                    folder.isSharedDrive = true;
+                    folder.lastSync = System.currentTimeMillis();
+                    folder.selected = previouslySelectedDriveIds.contains(folder.driveId);
+                    driveFolderDao.insert(folder);
+                    Log.d(TAG, "Added Shared-with-me folder: " + folder.name + " parent=" + parentId);
+                }
+
+                restoreVisibleDriveSelections(previouslySelectedDriveIds);
+                // N'auto-sélectionne QUE les dossiers réellement nouveaux sous une source
+                // persistée : préserve les décochages explicites de l'utilisateur.
+                selectFoldersUnderPersistedDriveSources(previouslyKnownDriveIds);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error while listing Drive folders", e);
@@ -714,7 +912,7 @@ public class DriveRepository {
 
         String current = fileId;
         Set<String> visited = new HashSet<>();
-        while (current != null && !current.isEmpty() && !visited.contains(current)) {
+        while (!visited.contains(current)) {
             visited.add(current);
             String parentId = parentById.get(current);
 
@@ -731,6 +929,22 @@ public class DriveRepository {
         }
 
         return false;
+    }
+
+    private void restoreVisibleDriveSelections(Set<String> selectedDriveIds) {
+        if (selectedDriveIds == null || selectedDriveIds.isEmpty()) return;
+        List<DriveFolder> allFolders = driveFolderDao.getAllSync();
+        if (allFolders == null || allFolders.isEmpty()) return;
+
+        for (DriveFolder folder : allFolders) {
+            if (folder == null) continue;
+            String driveId = folder.driveId.trim();
+            if (driveId.isEmpty() || !selectedDriveIds.contains(driveId)) continue;
+            if (!folder.selected) {
+                folder.selected = true;
+                driveFolderDao.update(folder);
+            }
+        }
     }
 
     public void listAudioFilesFromFolder(String folderId, Runnable onDone) {
@@ -786,7 +1000,17 @@ public class DriveRepository {
                 Log.d(TAG, "Sync targets after recursive expansion: " + foldersToSync.size()
                         + " folders (from " + selectedFolders.size() + " selected)");
 
-                String currentSelectionSignature = buildSelectionSignature(sourceByRootDriveId.keySet());
+                // Signature basée sur l'ENSEMBLE RÉEL des dossiers synchronisés (pas seulement
+                // les racines). Ainsi, décocher un sous-dossier change la signature et déclenche
+                // un bootstrap qui purge proprement ses anciennes chansons.
+                Set<String> syncedFolderIds = new HashSet<>();
+                for (DriveFolder f : foldersToSync.keySet()) {
+                    if (f != null && !f.driveId.trim().isEmpty()) {
+                        syncedFolderIds.add(f.driveId.trim());
+                    }
+                }
+
+                String currentSelectionSignature = buildSelectionSignature(syncedFolderIds);
                 String storedSelectionSignature = getSyncState(SYNC_KEY_SELECTION_SIGNATURE);
                 String startPageToken = getSyncState(SYNC_KEY_START_PAGE_TOKEN);
 
@@ -796,16 +1020,23 @@ public class DriveRepository {
                 int localDriveSongCount = songDao.countBySource(Song.SOURCE_DRIVE);
                 boolean selectionChanged = !currentSelectionSignature.equals(storedSelectionSignature);
                 boolean localLibraryEmpty = localDriveSongCount == 0;
+                // Force un bootstrap unique après une évolution de la logique de métadonnées
+                // (ex: lecture des balises ID3/Vorbis/iTunes) afin de ré-enrichir la
+                // bibliothèque déjà synchronisée avec les vraies balises.
+                String storedMetadataVersion = getSyncState(SYNC_KEY_METADATA_VERSION);
+                boolean metadataOutdated = !METADATA_SCHEMA_VERSION.equals(storedMetadataVersion);
                 boolean forceBootstrap = startPageToken == null
                         || startPageToken.trim().isEmpty()
                         || selectionChanged
-                        || localLibraryEmpty;
+                        || localLibraryEmpty
+                        || metadataOutdated;
 
                 Log.d(DRIVE_SYNC_TAG,
                         "SYNC_DECISION forceBootstrap=" + forceBootstrap
                                 + " tokenPresent=" + (startPageToken != null && !startPageToken.trim().isEmpty())
                                 + " selectionChanged=" + selectionChanged
                                 + " localEmpty=" + localLibraryEmpty
+                                + " metadataOutdated=" + metadataOutdated
                                 + " localDriveSongs=" + localDriveSongCount
                                 + " roots=" + sourceByRootDriveId.size());
 
@@ -827,6 +1058,10 @@ public class DriveRepository {
 
                 // La progression reste active tant que l'enrichissement des durées n'est pas terminé.
                 waitForDurationEnrichmentCompletion();
+
+                // Marque la version de logique de métadonnées comme appliquée : évite de
+                // re-bootstrapper à chaque synchro suivante.
+                putSyncState(SYNC_KEY_METADATA_VERSION, METADATA_SCHEMA_VERSION);
             } catch (Exception e) {
                 Log.e(TAG, "Error syncing folders", e);
             } finally {
@@ -893,7 +1128,7 @@ public class DriveRepository {
             final Song s = song;
             pool.execute(() -> {
                 try {
-                    if (s == null || s.id == null) return;
+                    if (s == null) return;
                     String fileId = extractDriveFileIdFromSong(s);
                     if (fileId == null) return;
 
@@ -902,17 +1137,32 @@ public class DriveRepository {
                     long fileSize = audio != null ? audio.fileSize : 0L;
 
                     long probeStartMs = System.currentTimeMillis();
-                    long durationMs = extractDriveDuration(fileId, fileName, fileSize, token);
+                    TrackDurationProbe.AudioMetadata meta =
+                            extractDriveMetadata(fileId, fileName, fileSize, token);
                     long probeMs = System.currentTimeMillis() - probeStartMs;
                     totalProbeMs.addAndGet(probeMs);
                     probeLatenciesMs.add(probeMs);
 
+                    long durationMs = meta != null ? meta.durationMs : 0L;
+                    boolean changed = false;
+
                     if (durationMs > 0L) {
-                        songDao.updateDuration(s.id, durationMs);
+                        s.duration = durationMs;
+                        changed = true;
                         if (audio != null) {
                             audio.durationMs = durationMs;
                             driveAudioDao.update(audio);
                         }
+                    }
+
+                    // Remplace les métadonnées devinées à partir des noms de dossiers/fichiers
+                    // par les vraies balises embarquées (ID3v2 / Vorbis / iTunes) quand présentes.
+                    if (meta != null && meta.hasAnyTag()) {
+                        changed |= applyTagsToSong(s, meta);
+                    }
+
+                    if (changed) {
+                        songDao.update(s);
                         updated.incrementAndGet();
                     } else {
                         failed.incrementAndGet();
@@ -927,7 +1177,7 @@ public class DriveRepository {
 
                     if (left == 0) {
                         int done = updated.get();
-                        long avgProbeMs = total > 0 ? totalProbeMs.get() / Math.max(total, 1) : 0L;
+                        long avgProbeMs = totalProbeMs.get() / Math.max(total, 1);
                         long p95ProbeMs = percentile95(probeLatenciesMs);
                         Log.d(DRIVE_SYNC_TAG,
                                 "DURATION_FALLBACK count=" + total
@@ -1057,9 +1307,64 @@ public class DriveRepository {
      * MediaMetadataRetriever (qui streame le média et est bien trop lent sur des URL HTTP).
      */
     private long extractDriveDuration(String fileId, String fileName, long fileSize, String accessToken) {
-        if (fileId == null || fileId.trim().isEmpty()) return 0L;
+        TrackDurationProbe.AudioMetadata meta = extractDriveMetadata(fileId, fileName, fileSize, accessToken);
+        return meta != null ? meta.durationMs : 0L;
+    }
+
+    /**
+     * Récupère la durée ET les balises embarquées (ID3v2 / Vorbis / iTunes) d'un fichier
+     * audio Drive en ne lisant que quelques Ko d'en-tête (requêtes HTTP Range).
+     */
+    private TrackDurationProbe.AudioMetadata extractDriveMetadata(String fileId, String fileName,
+                                                                  long fileSize, String accessToken) {
+        if (fileId == null || fileId.trim().isEmpty()) return null;
         String url = "https://www.googleapis.com/drive/v3/files/" + fileId.trim() + "?alt=media";
-        return TrackDurationProbe.probeDurationMs(url, "Bearer " + accessToken, fileName, fileSize);
+        return TrackDurationProbe.probeMetadata(url, "Bearer " + accessToken, fileName, fileSize);
+    }
+
+    /**
+     * Applique les balises embarquées à une chanson Drive, en écrasant les valeurs devinées
+     * depuis les noms de dossiers/fichiers. Recalcule l'albumId logique si l'artiste ou
+     * l'album a changé, afin de regrouper correctement les pistes. Retourne true si au moins
+     * un champ a été modifié.
+     */
+    private boolean applyTagsToSong(Song s, TrackDurationProbe.AudioMetadata meta) {
+        if (s == null || meta == null) return false;
+        boolean changed = false;
+
+        if (isNonEmpty(meta.title)) {
+            s.title = meta.title.trim();
+            changed = true;
+        }
+        // On préfère l'artiste de l'album (albumArtist) pour le regroupement quand présent,
+        // sinon l'artiste de la piste.
+        String artist = isNonEmpty(meta.artist) ? meta.artist.trim() : null;
+        if (isNonEmpty(artist)) {
+            s.artist = artist;
+            changed = true;
+        }
+        if (isNonEmpty(meta.album)) {
+            s.album = meta.album.trim();
+            changed = true;
+        }
+        if (meta.trackNumber > 0) {
+            s.trackNumber = meta.trackNumber;
+            changed = true;
+        }
+        if (isNonEmpty(meta.year)) {
+            s.releaseDate = meta.year.trim();
+            changed = true;
+        }
+
+        if (changed) {
+            // Regroupe les pistes par (source, artiste, album) tags-corrigés.
+            s.albumId = toDriveLogicalAlbumId(s.folderSourceId, s.artist, s.album);
+        }
+        return changed;
+    }
+
+    private boolean isNonEmpty(String s) {
+        return s != null && !s.trim().isEmpty();
     }
 
     private List<DriveAudio> syncAudioFilesFromFolder(String folderId) throws IOException {
@@ -1070,7 +1375,7 @@ public class DriveRepository {
         List<DriveAudio> existing = driveAudioDao.getByFolderSync(folderId);
         if (existing != null) {
             for (DriveAudio prev : existing) {
-                if (prev != null && prev.fileId != null && !prev.fileId.trim().isEmpty()) {
+                if (prev != null && !prev.fileId.trim().isEmpty()) {
                     existingById.put(prev.fileId, prev);
                 }
             }
@@ -1103,7 +1408,7 @@ public class DriveRepository {
                     .setIncludeItemsFromAllDrives(true)
                     .setFields("nextPageToken,files(id,name,mimeType,modifiedTime,size,parents,md5Checksum,trashed,webContentLink)")
                     .setPageSize(1000);
-            if (pageToken != null && !pageToken.isEmpty()) {
+            if (pageToken != null) {
                 request.setPageToken(pageToken);
             }
             FileList result = request.execute();
@@ -1175,7 +1480,7 @@ public class DriveRepository {
                 audio.localPath = "";
 
                 DriveAudio prev = existingById.get(audio.fileId);
-                if (prev != null && canReuseCachedFile(prev, audio)) {
+                if (canReuseCachedFile(prev, audio)) {
                     audio.downloaded = true;
                     audio.localPath = prev.localPath;
                 }
@@ -1189,29 +1494,40 @@ public class DriveRepository {
     }
 
     private Song buildDriveSong(DriveFolder folder, FolderSource source, DriveAudio audio) {
-        if (audio == null || audio.fileId == null || audio.fileId.trim().isEmpty()) return null;
+        if (audio == null || audio.fileId.trim().isEmpty()) return null;
         if (isPlaylistFileName(audio.fileName)) return null;
 
-        String sourceName = source != null && source.displayName != null && !source.displayName.trim().isEmpty()
-                ? source.displayName.trim()
-                : (folder != null && folder.name != null && !folder.name.trim().isEmpty() ? folder.name.trim() : "Google Drive");
         String folderName = folder != null ? folder.name : null;
         String baseName = stripExtension(audio.fileName);
-        TrackMetadata metadata = parseTrackMetadata(baseName, folderName, sourceName);
+
+        // Fallback DÉTERMINISTE (utilisé tant que les vraies balises embarquées ne sont pas lues,
+        // ou pour les fichiers sans aucune balise) :
+        //   • titre  = nom du fichier (numéro de piste de tête retiré)
+        //   • album  = nom du dossier (année éventuelle extraite)
+        //   • artiste = « Artiste inconnu » (on n'invente jamais d'artiste à partir des noms)
+        // Les métadonnées réelles (ID3/Vorbis/iTunes) remplacent ces valeurs via applyTagsToSong().
+        String title = stripLeadingTrackNumber(baseName);
+        if (title == null || title.trim().isEmpty()) title = baseName;
+        if (title == null || title.trim().isEmpty()) title = "Unknown";
+
+        String album = normalizeAlbumLabel(folderName);
+        if (album == null || album.trim().isEmpty()) {
+            album = source != null && !source.displayName.trim().isEmpty()
+                    ? source.displayName.trim() : "Unknown";
+        }
+        String year = extractAlbumYear(folderName);
+        int trackNumber = audio.trackNumber > 0 ? audio.trackNumber : extractLeadingTrackNumber(baseName);
 
         Song song = new Song();
         song.id = "D_" + audio.fileId;
-        song.title = metadata.title;
-        song.artist = metadata.artist != null && !metadata.artist.trim().isEmpty() ? metadata.artist.trim() : sourceName;
-        song.album = metadata.album != null && !metadata.album.trim().isEmpty() ? metadata.album.trim() : sourceName;
+        song.title = title.trim();
+        song.artist = UNKNOWN_ARTIST;
+        song.album = album.trim();
         song.albumId = toDriveLogicalAlbumId(source != null ? source.id : 0L, song.artist, song.album);
-        song.trackNumber = audio.trackNumber > 0 ? audio.trackNumber : (metadata.trackNumber > 0 ? metadata.trackNumber : 0);
-        song.duration = audio.durationMs > 0L ? audio.durationMs : 0L;
-        // Date de sortie extraite du nom de dossier ("[2000] Album"), null si absente :
-        // le rebuild d'albums et le repli en ligne géreront le cas échéant.
-        song.releaseDate = metadata.year != null && !metadata.year.trim().isEmpty()
-                ? metadata.year.trim()
-                : null;
+        song.trackNumber = Math.max(trackNumber, 0);
+        song.duration = Math.max(audio.durationMs, 0L);
+        // Date de sortie extraite du nom de dossier ("[2000] Album"), null si absente.
+        song.releaseDate = year != null && !year.trim().isEmpty() ? year.trim() : null;
         // Streaming direct: la resolution vers Drive API (alt=media) est faite dans PlaybackService.
         song.path = "drive://file/" + audio.fileId;
         song.source = Song.SOURCE_DRIVE;
@@ -1541,9 +1857,6 @@ public class DriveRepository {
         if (metadataRaw instanceof Map) {
             return ((Map<?, ?>) metadataRaw).get(key);
         }
-        if (metadataRaw instanceof com.google.api.client.util.GenericData) {
-            return ((com.google.api.client.util.GenericData) metadataRaw).get(key);
-        }
         return null;
     }
 
@@ -1559,76 +1872,10 @@ public class DriveRepository {
         }
     }
 
-    private List<DiscogsTrackInfo> fetchDiscogsDurationsForFolder(DriveFolder folder, FolderSource source) {
-        if (coverArtFetcher == null) return null;
-
-        String folderName = folder != null ? folder.name : null;
-        String sourceName = source != null ? source.displayName : null;
-        AlbumContext folderContext = parseAlbumContext(folderName);
-        AlbumContext sourceContext = parseAlbumContext(sourceName);
-
-        String artist = firstNonEmpty(folderContext.artist, sourceContext.artist);
-        String album = firstNonEmpty(folderContext.album, sourceContext.album);
-        if ((artist == null || artist.isEmpty()) && (album == null || album.isEmpty())) {
-            return null;
-        }
-
-        return coverArtFetcher.fetchDiscogsTrackInfos(artist != null ? artist : "", album != null ? album : "");
-    }
-
-    private void applyDiscogsDurationIfMissing(Song song, DriveAudio audio, List<DiscogsTrackInfo> discogsTracks, int sequentialIndex) {
-        if (song == null || audio == null || discogsTracks == null || discogsTracks.isEmpty()) return;
-        if (song.duration > 0L) return;
-
-        long duration = 0L;
-        if (audio.trackNumber > 0) {
-            int index = audio.trackNumber - 1;
-            if (index >= 0 && index < discogsTracks.size()) {
-                DiscogsTrackInfo info = discogsTracks.get(index);
-                duration = info != null ? info.durationMs : 0L;
-            }
-        }
-
-        if (duration <= 0L) {
-            String songTitle = normalizeTrackText(song.title);
-            for (DiscogsTrackInfo info : discogsTracks) {
-                if (info == null || info.durationMs <= 0L) continue;
-                String discogsTitle = normalizeTrackText(info.title);
-                if (!songTitle.isEmpty() && !discogsTitle.isEmpty() && titlesLookEquivalent(songTitle, discogsTitle)) {
-                    duration = info.durationMs;
-                    break;
-                }
-            }
-        }
-
-        if (duration <= 0L && sequentialIndex >= 0 && sequentialIndex < discogsTracks.size()) {
-            DiscogsTrackInfo info = discogsTracks.get(sequentialIndex);
-            duration = info != null ? info.durationMs : 0L;
-        }
-
-        if (duration > 0L) {
-            song.duration = duration;
-        }
-    }
-
-    private String normalizeTrackText(String value) {
-        if (value == null) return "";
-        String normalized = value.trim().toLowerCase();
-        normalized = normalized.replaceAll("\\[[^\\]]*\\]", " ");
-        normalized = normalized.replaceAll("\\([^\\)]*\\)", " ");
-        normalized = normalized.replaceAll("[^a-z0-9]+", " ");
-        return normalized.replaceAll("\\s+", " ").trim();
-    }
-
-    private boolean titlesLookEquivalent(String a, String b) {
-        if (a.isEmpty() || b.isEmpty()) return false;
-        return a.equals(b) || a.contains(b) || b.contains(a);
-    }
-
     private boolean canReuseCachedFile(DriveAudio previous, DriveAudio current) {
         if (previous == null || current == null) return false;
         if (!previous.downloaded) return false;
-        if (previous.localPath == null || previous.localPath.trim().isEmpty()) return false;
+        if (previous.localPath.trim().isEmpty()) return false;
 
         java.io.File local = new java.io.File(previous.localPath.trim());
         if (!local.exists() || !local.isFile() || local.length() <= 0L) return false;
@@ -1636,90 +1883,6 @@ public class DriveRepository {
         return previous.lastModified == current.lastModified && previous.fileSize == current.fileSize;
     }
 
-    private String downloadDriveAudioToCache(String fileId, String fileName, String mimeType) {
-        if (driveService == null || fileId == null || fileId.trim().isEmpty()) return null;
-        try {
-            java.io.File cacheDir = new java.io.File(context.getFilesDir(), DRIVE_AUDIO_CACHE_DIR);
-            if (!cacheDir.exists() && !cacheDir.mkdirs()) {
-                Log.w(TAG, "Cannot create Drive cache dir: " + cacheDir.getAbsolutePath());
-                return null;
-            }
-
-            String extension = resolveExtension(fileName, mimeType);
-            String safeName = sanitizeFileName(fileName);
-            java.io.File target = new java.io.File(cacheDir, fileId + "_" + safeName + extension);
-            java.io.File temp = new java.io.File(cacheDir, fileId + ".tmp");
-
-            if (temp.exists()) {
-                // Nettoie un ancien telechargement interrompu.
-                //noinspection ResultOfMethodCallIgnored
-                temp.delete();
-            }
-
-            try (OutputStream out = new FileOutputStream(temp)) {
-                driveService.files().get(fileId).executeMediaAndDownloadTo(out);
-            }
-
-            if (target.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                target.delete();
-            }
-
-            if (!temp.renameTo(target)) {
-                Log.w(TAG, "Cannot move temp Drive file to target for id=" + fileId);
-                //noinspection ResultOfMethodCallIgnored
-                temp.delete();
-                return null;
-            }
-
-            return target.getAbsolutePath();
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to download Drive audio file id=" + fileId + " name=" + fileName, e);
-            return null;
-        }
-    }
-
-    private long extractDurationMs(String path) {
-        if (path == null || path.trim().isEmpty()) return 0L;
-        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-        try {
-            retriever.setDataSource(path.trim());
-            String value = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            if (value == null || value.trim().isEmpty()) return 0L;
-            return Long.parseLong(value.trim());
-        } catch (Exception e) {
-            Log.w(TAG, "Cannot extract duration for Drive file: " + path, e);
-            return 0L;
-        } finally {
-            try {
-                retriever.release();
-            } catch (Exception ignored) {
-                // ignore
-            }
-        }
-    }
-
-    private String sanitizeFileName(String fileName) {
-        String base = fileName != null ? fileName.trim() : "";
-        if (base.isEmpty()) return "track";
-        return base.replaceAll("[^A-Za-z0-9._-]", "_");
-    }
-
-    private String resolveExtension(String fileName, String mimeType) {
-        if (fileName != null) {
-            int dot = fileName.lastIndexOf('.');
-            if (dot >= 0 && dot < fileName.length() - 1) {
-                return "";
-            }
-        }
-
-        if ("audio/mpeg".equalsIgnoreCase(mimeType)) return ".mp3";
-        if ("audio/flac".equalsIgnoreCase(mimeType)) return ".flac";
-        if ("audio/wav".equalsIgnoreCase(mimeType) || "audio/x-wav".equalsIgnoreCase(mimeType)) return ".wav";
-        if ("audio/ogg".equalsIgnoreCase(mimeType)) return ".ogg";
-        if ("audio/m4a".equalsIgnoreCase(mimeType) || "audio/mp4".equalsIgnoreCase(mimeType)) return ".m4a";
-        return "";
-    }
 
     private static class TrackMetadata {
         String artist;
@@ -1737,10 +1900,6 @@ public class DriveRepository {
 
     public LiveData<List<DriveAudio>> getAudioFilesFromFolder(String folderId) {
         return driveAudioDao.observeByFolder(folderId);
-    }
-
-    public LiveData<List<DriveAudio>> getDownloadedAudioFiles() {
-        return driveAudioDao.observeDownloaded();
     }
 
     public LiveData<List<DriveFolder>> observeDriveFolders() {
@@ -1775,28 +1934,26 @@ public class DriveRepository {
             if (onDone != null) onDone.run();
             return;
         }
-        // Le re-listing réinitialise les `selected` : on reconstruit ensuite la sélection.
-        listFoldersFromDrive(() -> executor.execute(() -> {
-            try {
-                selectFoldersUnderPersistedDriveSources();
-            } catch (Exception e) {
-                Log.e(TAG, "Error rebuilding Drive selection before resync", e);
-            }
-            syncSelectedFolders(onDone);
-        }));
+        // Le re-listing préserve les sélections/décochages existants et auto-sélectionne
+        // uniquement les nouveaux sous-dossiers découverts, puis on relance la synchro.
+        listFoldersFromDrive(() -> executor.execute(() -> syncSelectedFolders(onDone)));
     }
 
     /**
-     * Coche (selected=1) tous les dossiers Drive appartenant à une source déjà
-     * persistée (folder_sources "drive://folder/&lt;rootId&gt;"), y compris les
-     * sous-dossiers nouvellement ajoutés.
+     * Coche (selected=1) les dossiers Drive appartenant à une source déjà persistée
+     * (folder_sources "drive://folder/&lt;rootId&gt;").
+     *
+     * @param previouslyKnownDriveIds ensemble des dossiers connus avant re-listing. Si non nul,
+     *        seuls les dossiers RÉELLEMENT NOUVEAUX (absents de cet ensemble) sont auto-cochés,
+     *        afin de préserver les décochages explicites de l'utilisateur. Si nul, tous les
+     *        dossiers sous une source persistée sont cochés (comportement historique).
      */
-    private void selectFoldersUnderPersistedDriveSources() {
+    private void selectFoldersUnderPersistedDriveSources(Set<String> previouslyKnownDriveIds) {
         List<FolderSource> sources = folderSourceDao.getAllSync();
         Set<String> rootDriveIds = new HashSet<>();
         if (sources != null) {
             for (FolderSource s : sources) {
-                if (s == null || s.treeUri == null) continue;
+                if (s == null) continue;
                 if (s.treeUri.startsWith(DRIVE_SOURCE_PREFIX)) {
                     String rootId = s.treeUri.substring(DRIVE_SOURCE_PREFIX.length()).trim();
                     if (!rootId.isEmpty()) rootDriveIds.add(rootId);
@@ -1813,7 +1970,7 @@ public class DriveRepository {
 
         Map<String, DriveFolder> byId = new HashMap<>();
         for (DriveFolder f : all) {
-            if (f != null && f.driveId != null && !f.driveId.trim().isEmpty()) {
+            if (f != null && !f.driveId.trim().isEmpty()) {
                 byId.put(f.driveId.trim(), f);
             }
         }
@@ -1821,6 +1978,12 @@ public class DriveRepository {
         int reselected = 0;
         for (DriveFolder f : all) {
             if (f == null) continue;
+            // Ne re-coche pas un dossier déjà connu (donc potentiellement décoché volontairement) :
+            // on n'auto-sélectionne que les nouveaux dossiers découverts sous une source.
+            if (previouslyKnownDriveIds != null
+                    && previouslyKnownDriveIds.contains(f.driveId.trim())) {
+                continue;
+            }
             if (isUnderPersistedRoot(f, byId, rootDriveIds)) {
                 if (!f.selected) {
                     f.selected = true;
@@ -1829,7 +1992,7 @@ public class DriveRepository {
                 }
             }
         }
-        Log.d(TAG, "Reselected " + reselected + " Drive folder(s) under existing sources");
+        Log.d(TAG, "Auto-selected " + reselected + " new Drive folder(s) under existing sources");
     }
 
     /**
@@ -1839,14 +2002,14 @@ public class DriveRepository {
     private boolean isUnderPersistedRoot(DriveFolder folder,
                                          Map<String, DriveFolder> byId,
                                          Set<String> rootDriveIds) {
-        if (folder == null || folder.driveId == null) return false;
+        if (folder == null) return false;
         Set<String> visited = new HashSet<>();
         DriveFolder current = folder;
         while (current != null) {
-            String id = current.driveId != null ? current.driveId.trim() : "";
+            String id = current.driveId.trim();
             if (id.isEmpty() || !visited.add(id)) return false;
             if (rootDriveIds.contains(id)) return true;
-            String parentId = current.parentDriveId != null ? current.parentDriveId.trim() : "";
+            String parentId = current.parentDriveId.trim();
             if (parentId.isEmpty()) return false;
             if (rootDriveIds.contains(parentId)) return true;
             current = byId.get(parentId);
@@ -1886,7 +2049,7 @@ public class DriveRepository {
         Map<String, DriveFolder> result = new HashMap<>();
         if (folders == null) return result;
         for (DriveFolder folder : folders) {
-            if (folder == null || folder.driveId == null) continue;
+            if (folder == null) continue;
             String driveId = folder.driveId.trim();
             if (!driveId.isEmpty()) {
                 result.put(driveId, folder);
@@ -1896,10 +2059,12 @@ public class DriveRepository {
     }
 
     /**
-     * Étend l'ensemble des dossiers cochés à TOUS leurs descendants (récursivement),
-     * à la manière de Spiral Player : cocher un dossier revient à synchroniser toute
-     * son arborescence. Chaque dossier (coché ou descendant) est associé au rootDriveId
-     * de l'ancêtre coché dont il hérite la source.
+     * Étend l'ensemble des dossiers cochés à leurs descendants, MAIS uniquement à ceux qui
+     * sont eux-mêmes sélectionnés. Cocher un dossier propage {@code selected=true} à tout son
+     * sous-arbre (côté adaptateur), et décocher un sous-dossier met son sous-arbre à
+     * {@code selected=false} : on respecte donc les décochages explicites en élaguant les
+     * branches non sélectionnées. Chaque dossier retenu est associé au rootDriveId de l'ancêtre
+     * coché dont il hérite la source.
      *
      * L'ordre d'insertion est préservé et chaque dossier n'apparaît qu'une seule fois,
      * même si un parent et un de ses enfants sont cochés simultanément.
@@ -1914,7 +2079,7 @@ public class DriveRepository {
         Map<String, List<DriveFolder>> childrenByParent = new HashMap<>();
         if (allFolders != null) {
             for (DriveFolder f : allFolders) {
-                if (f == null || f.parentDriveId == null) continue;
+                if (f == null) continue;
                 String parentId = f.parentDriveId.trim();
                 if (parentId.isEmpty()) continue;
                 childrenByParent.computeIfAbsent(parentId, k -> new ArrayList<>()).add(f);
@@ -1923,18 +2088,18 @@ public class DriveRepository {
 
         Set<String> visited = new HashSet<>();
         for (DriveFolder selected : selectedFolders) {
-            if (selected == null || selected.driveId == null) continue;
+            if (selected == null) continue;
             String selectedDriveId = selected.driveId.trim();
             if (selectedDriveId.isEmpty()) continue;
 
             String rootDriveId = resolveSelectedRootDriveId(selected, selectedById);
 
-            // Parcours en largeur depuis le dossier coché vers tous ses descendants.
+            // Parcours en largeur depuis le dossier coché vers ses descendants SÉLECTIONNÉS.
             Deque<DriveFolder> queue = new ArrayDeque<>();
             queue.add(selected);
             while (!queue.isEmpty()) {
                 DriveFolder current = queue.poll();
-                if (current == null || current.driveId == null) continue;
+                if (current == null) continue;
                 String currentDriveId = current.driveId.trim();
                 if (currentDriveId.isEmpty() || !visited.add(currentDriveId)) continue;
 
@@ -1942,7 +2107,13 @@ public class DriveRepository {
 
                 List<DriveFolder> children = childrenByParent.get(currentDriveId);
                 if (children != null) {
-                    queue.addAll(children);
+                    for (DriveFolder child : children) {
+                        // Élague les sous-dossiers décochés (et donc tout leur sous-arbre) :
+                        // décocher un enfant a propagé selected=false à ses descendants.
+                        if (child != null && child.selected) {
+                            queue.add(child);
+                        }
+                    }
                 }
             }
         }
@@ -1951,7 +2122,7 @@ public class DriveRepository {
     }
 
     private String resolveSelectedRootDriveId(DriveFolder folder, Map<String, DriveFolder> selectedById) {
-        if (folder == null || folder.driveId == null) return null;
+        if (folder == null) return null;
 
         String currentDriveId = folder.driveId.trim();
         if (currentDriveId.isEmpty()) return null;
@@ -1969,7 +2140,7 @@ public class DriveRepository {
             if (parent == null) {
                 break;
             }
-            rootDriveId = parent.driveId != null && !parent.driveId.trim().isEmpty()
+            rootDriveId = !parent.driveId.trim().isEmpty()
                     ? parent.driveId.trim()
                     : rootDriveId;
             current = parent;
@@ -1983,7 +2154,7 @@ public class DriveRepository {
         if (existingSources == null || existingSources.isEmpty()) return;
 
         for (FolderSource source : existingSources) {
-            if (source == null || source.treeUri == null) continue;
+            if (source == null) continue;
             if (!source.treeUri.startsWith(DRIVE_SOURCE_PREFIX)) continue;
 
             String driveId = source.treeUri.substring(DRIVE_SOURCE_PREFIX.length()).trim();
@@ -1996,14 +2167,14 @@ public class DriveRepository {
     }
 
     private void upsertDriveFolderSource(DriveFolder folder) {
-        if (folder == null || folder.driveId == null || folder.driveId.trim().isEmpty()) return;
+        if (folder == null || folder.driveId.trim().isEmpty()) return;
 
         String normalizedId = folder.driveId.trim();
         String treeUri = DRIVE_SOURCE_PREFIX + normalizedId;
         FolderSource existing = folderSourceDao.getByTreeUri(treeUri);
 
         if (existing != null) {
-            if (folder.name != null && !folder.name.trim().isEmpty()) {
+            if (!folder.name.trim().isEmpty()) {
                 existing.displayName = folder.name.trim();
             }
             existing.enabled = true;
@@ -2012,7 +2183,7 @@ public class DriveRepository {
         }
 
         FolderSource source = new FolderSource();
-        source.displayName = (folder.name != null && !folder.name.trim().isEmpty())
+        source.displayName = !folder.name.trim().isEmpty()
                 ? folder.name.trim()
                 : "Google Drive";
         source.treeUri = treeUri;
@@ -2021,13 +2192,31 @@ public class DriveRepository {
         folderSourceDao.insert(source);
     }
 
+    private String extractSharedDriveContainerId(File file) {
+        if (file == null) return null;
+        if (file.getDriveId() != null && !file.getDriveId().trim().isEmpty()) {
+            return file.getDriveId().trim();
+        }
+        // Certains comptes/objets exposent encore teamDriveId au lieu de driveId.
+        Object teamDriveId = file.get("teamDriveId");
+        if (teamDriveId != null) {
+            String id = String.valueOf(teamDriveId).trim();
+            if (!id.isEmpty()) return id;
+        }
+        return null;
+    }
+
     private boolean isSharedDriveFolder(File file,
-                                        Map<String, String> parentById,
-                                        String myDriveRootId,
-                                        Set<String> knownIds) {
+                                         Map<String, String> parentById,
+                                         String myDriveRootId,
+                                         Set<String> knownIds) {
         // Signal le plus fiable quand présent (items de lecteurs partagés)
-        if (file.getDriveId() != null && !file.getDriveId().isEmpty()) {
-            return true;
+        if (extractSharedDriveContainerId(file) != null) {
+             return true;
+         }
+        // Sans parent connu, on considère Mon Drive par défaut
+        if (parentById.get(file.getId()) == null) {
+            return false;
         }
 
         String currentId = file.getId();
@@ -2036,10 +2225,10 @@ public class DriveRepository {
             visited.add(currentId);
             String parentId = parentById.get(currentId);
 
-            // Sans parent connu, on considère Mon Drive par défaut
             if (parentId == null || parentId.isEmpty()) {
                 return false;
             }
+
 
             if (!myDriveRootId.isEmpty() && parentId.equals(myDriveRootId)) {
                 return false;
@@ -2112,7 +2301,7 @@ public class DriveRepository {
                         account.getAccount(),
                         "oauth2:https://www.googleapis.com/auth/drive.readonly"
                 );
-                if (refreshedToken != null && !refreshedToken.trim().isEmpty()) {
+                if (!refreshedToken.trim().isEmpty()) {
                     setDriveAccessToken(refreshedToken.trim());
                     setDriveService(buildDriveService(refreshedToken.trim()));
                     Log.d(TAG, "Drive session refreshed silently");

@@ -48,6 +48,30 @@ final class TrackDurationProbe {
     }
 
     /**
+     * Métadonnées extraites d'un fichier audio : durée + balises embarquées
+     * (ID3v2 pour MP3, Vorbis comments pour FLAC/Ogg, atomes iTunes pour MP4/M4A).
+     * Les champs de balises valent {@code null}/0 si absents ou non décodables.
+     */
+    static final class AudioMetadata {
+        long durationMs;
+        String title;
+        String artist;
+        String album;
+        String albumArtist;
+        String year;
+        int trackNumber;
+
+        boolean hasAnyTag() {
+            return notBlank(title) || notBlank(artist) || notBlank(album)
+                    || notBlank(albumArtist) || notBlank(year) || trackNumber > 0;
+        }
+
+        private static boolean notBlank(String s) {
+            return s != null && !s.trim().isEmpty();
+        }
+    }
+
+    /**
      * @param url        endpoint {@code files/{id}?alt=media}
      * @param authHeader valeur complète de l'en-tête Authorization ("Bearer xxx")
      * @param fileName   nom du fichier (sert à déduire le format)
@@ -55,6 +79,16 @@ final class TrackDurationProbe {
      * @return durée en millisecondes, ou 0 si indéterminable
      */
     static long probeDurationMs(String url, String authHeader, String fileName, long fileSize) {
+        AudioMetadata meta = probeMetadata(url, authHeader, fileName, fileSize);
+        return meta != null ? meta.durationMs : 0L;
+    }
+
+    /**
+     * Variante de {@link #probeDurationMs} qui décode aussi les balises embarquées à partir
+     * des mêmes octets d'en-tête, sans requête réseau supplémentaire dans la plupart des cas.
+     */
+    static AudioMetadata probeMetadata(String url, String authHeader, String fileName, long fileSize) {
+        AudioMetadata meta = new AudioMetadata();
         HttpURLConnection baseConn = null;
         try {
             // Crée UNE SEULE connexion HTTP réutilisable pour ce fichier.
@@ -68,7 +102,7 @@ final class TrackDurationProbe {
 
             Range headRange = rangeGetRWithConn(url, authHeader, 0, HEAD_SIZE, baseConn);
             byte[] head = headRange != null ? headRange.data : null;
-            if (head == null || head.length < 12) return 0L;
+            if (head == null || head.length < 12) return meta;
 
             // Taille totale FIABLE issue de Content-Range ; repli sur la taille passée si absente.
             long realSize = headRange.total > 0 ? headRange.total : fileSize;
@@ -82,38 +116,42 @@ final class TrackDurationProbe {
             if (head[0] == 'f' && head[1] == 'L' && head[2] == 'a' && head[3] == 'C') {
                 format = "flac";
                 duration = parseFlac(head);
+                parseFlacTags(head, meta);
             } else if (head[0] == 'R' && head[1] == 'I' && head[2] == 'F' && head[3] == 'F'
                     && head[8] == 'W' && head[9] == 'A' && head[10] == 'V' && head[11] == 'E') {
                 format = "wav";
                 duration = parseWav(head);
             } else if (head.length >= 8 && head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p') {
                 format = "mp4";
-                duration = parseMp4(url, authHeader, head, realSize, baseConn);
+                duration = parseMp4WithTags(url, authHeader, head, realSize, baseConn, meta);
             } else if (head[0] == 'O' && head[1] == 'g' && head[2] == 'g' && head[3] == 'S') {
                 format = "ogg";
                 duration = parseOgg(url, authHeader, head, realSize, baseConn);
+                parseOggTags(head, meta);
             } else {
                 format = "mp3";
                 duration = parseMp3(url, authHeader, head, realSize, baseConn);
+                parseId3v2Tags(url, authHeader, head, meta);
                 if (duration <= 0) {
                     // Repli sur l'extension pour les conteneurs non détectés par signature.
-                    if (lower.endsWith(".flac")) { format = "flac?"; duration = parseFlac(head); }
+                    if (lower.endsWith(".flac")) { format = "flac?"; duration = parseFlac(head); parseFlacTags(head, meta); }
                     else if (lower.endsWith(".wav")) { format = "wav?"; duration = parseWav(head); }
                     else if (lower.endsWith(".m4a") || lower.endsWith(".mp4") || lower.endsWith(".aac")) {
-                        format = "mp4?"; duration = parseMp4(url, authHeader, head, realSize, baseConn);
+                        format = "mp4?"; duration = parseMp4WithTags(url, authHeader, head, realSize, baseConn, meta);
                     } else if (lower.endsWith(".ogg") || lower.endsWith(".opus")) {
-                        format = "ogg?"; duration = parseOgg(url, authHeader, head, realSize, baseConn);
+                        format = "ogg?"; duration = parseOgg(url, authHeader, head, realSize, baseConn); parseOggTags(head, meta);
                     }
                 }
             }
 
+            meta.durationMs = duration;
             if (duration <= 0) {
                 Log.d(TAG, "duration=0 for '" + fileName + "' (format=" + format + ", size=" + realSize + ")");
             }
-            return duration;
+            return meta;
         } catch (Exception e) {
             Log.w(TAG, "probe failed for " + fileName + ": " + e.getMessage());
-            return 0L;
+            return meta;
         }
     }
 
@@ -456,6 +494,44 @@ final class TrackDurationProbe {
         return parseMp4(url, authHeader, head, fileSize, null);
     }
 
+    /**
+     * Localise l'atome {@code moov} (où qu'il soit dans le fichier), en extrait la durée
+     * ({@code mvhd}) ET les balises iTunes ({@code udta/meta/ilst}) depuis le même buffer,
+     * sans requête réseau supplémentaire.
+     */
+    private static long parseMp4WithTags(String url, String authHeader, byte[] head,
+                                         long fileSize, HttpURLConnection baseConn,
+                                         AudioMetadata meta) throws IOException {
+        long offset = 0;
+        int guard = 0;
+        while (guard++ < 128) {
+            byte[] hdr = bytesAt(url, authHeader, head, offset, 16, null);
+            if (hdr == null || hdr.length < 8) return 0L;
+
+            long size = readUInt32(hdr, 0);
+            String type = new String(hdr, 4, 4, StandardCharsets.US_ASCII);
+            int headerLen = 8;
+            if (size == 1) {
+                if (hdr.length < 16) return 0L;
+                size = readUInt64(hdr, 8);
+                headerLen = 16;
+            }
+            if (size < headerLen) return 0L;
+
+            if ("moov".equals(type)) {
+                int cap = (int) Math.min(size, 4 << 20); // 4 Mo : couvre mvhd + ilst (avec pochette)
+                byte[] moov = rangeGet(url, authHeader, offset, cap);
+                if (moov == null) return 0L;
+                findIlst(moov, 8, moov.length, meta);
+                return findMvhdDuration(moov);
+            }
+
+            offset += size;
+            if (fileSize > 0 && offset >= fileSize) return 0L;
+        }
+        return 0L;
+    }
+
     private static long parseMp4(String url, String authHeader, byte[] head, long fileSize, HttpURLConnection baseConn) throws IOException {
         long offset = 0;
         int guard = 0;
@@ -591,6 +667,301 @@ final class TrackDurationProbe {
 
         long samples = opus ? Math.max(0, granule - preSkip) : granule;
         return Math.round(samples * 1000.0 / sampleRate);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Balises : ID3v2 (MP3), Vorbis comments (FLAC / Ogg), iTunes ilst (MP4 / M4A)
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Décode les frames texte d'un tag ID3v2 (v2.2/v2.3/v2.4) situé en tête de fichier.
+     * Si le tag dépasse l'en-tête déjà téléchargé, on récupère juste la zone du tag.
+     */
+    private static void parseId3v2Tags(String url, String authHeader, byte[] head, AudioMetadata meta) {
+        try {
+            if (head.length < 10 || head[0] != 'I' || head[1] != 'D' || head[2] != '3') return;
+            int tagSize = ((head[6] & 0x7F) << 21) | ((head[7] & 0x7F) << 14)
+                    | ((head[8] & 0x7F) << 7) | (head[9] & 0x7F);
+            byte[] d = head;
+            // Si les frames dépassent l'en-tête (gros tag avec pochette), on récupère tout le tag.
+            if (10 + tagSize > head.length && tagSize > 0 && tagSize < 1_000_000) {
+                byte[] full = rangeGet(url, authHeader, 0, Math.min(10 + tagSize, HEAD_SIZE * 8));
+                if (full != null && full.length > head.length) d = full;
+            }
+            parseId3v2(d, tagSize, meta);
+        } catch (Exception ignored) {
+            // best effort
+        }
+    }
+
+    private static void parseId3v2(byte[] d, int tagSize, AudioMetadata meta) {
+        int major = d[3] & 0xFF;
+        int flags = d[5] & 0xFF;
+        int end = Math.min(10 + tagSize, d.length);
+        int p = 10;
+
+        // Saute un éventuel en-tête étendu.
+        if ((flags & 0x40) != 0 && p + 4 <= d.length) {
+            int extSize = (major == 4)
+                    ? (((d[p] & 0x7F) << 21) | ((d[p + 1] & 0x7F) << 14) | ((d[p + 2] & 0x7F) << 7) | (d[p + 3] & 0x7F))
+                    : readInt32(d, p);
+            p += (major == 4 ? 4 : 4) + Math.max(extSize, 0);
+        }
+
+        boolean v22 = major == 2;
+        int idLen = v22 ? 3 : 4;
+        int frameHeaderLen = v22 ? 6 : 10;
+
+        while (p + frameHeaderLen <= end) {
+            if (d[p] == 0) break; // padding
+            String id = new String(d, p, idLen, StandardCharsets.ISO_8859_1);
+            int frameSize;
+            if (v22) {
+                frameSize = ((d[p + 3] & 0xFF) << 16) | ((d[p + 4] & 0xFF) << 8) | (d[p + 5] & 0xFF);
+            } else if (major == 4) {
+                frameSize = ((d[p + 4] & 0x7F) << 21) | ((d[p + 5] & 0x7F) << 14)
+                        | ((d[p + 6] & 0x7F) << 7) | (d[p + 7] & 0x7F);
+            } else {
+                frameSize = readInt32(d, p + 4);
+            }
+            int frameStart = p + frameHeaderLen;
+            if (frameSize <= 0 || frameStart + frameSize > d.length) break;
+
+            handleId3Frame(id, d, frameStart, frameSize, meta);
+            p = frameStart + frameSize;
+        }
+    }
+
+    private static void handleId3Frame(String id, byte[] d, int off, int len, AudioMetadata meta) {
+        // v2.3/2.4 : TIT2/TPE1/TALB/TPE2/TRCK/TYER/TDRC. v2.2 : TT2/TP1/TAL/TP2/TRK/TYE.
+        String value = null;
+        boolean isText = id.startsWith("T");
+        if (isText) value = decodeId3Text(d, off, len);
+        if (value == null || value.trim().isEmpty()) return;
+        value = value.trim();
+
+        switch (id) {
+            case "TIT2": case "TT2": if (isEmpty(meta.title)) meta.title = value; break;
+            case "TPE1": case "TP1": if (isEmpty(meta.artist)) meta.artist = value; break;
+            case "TALB": case "TAL": if (isEmpty(meta.album)) meta.album = value; break;
+            case "TPE2": case "TP2": if (isEmpty(meta.albumArtist)) meta.albumArtist = value; break;
+            case "TRCK": case "TRK": if (meta.trackNumber <= 0) meta.trackNumber = parseLeadingInt(value); break;
+            case "TYER": case "TYE": case "TDRC": case "TDRL":
+                if (isEmpty(meta.year)) meta.year = extractYear(value);
+                break;
+            default: break;
+        }
+    }
+
+    private static String decodeId3Text(byte[] d, int off, int len) {
+        if (len < 1) return null;
+        int encoding = d[off] & 0xFF;
+        int textOff = off + 1;
+        int textLen = len - 1;
+        if (textLen <= 0) return null;
+        try {
+            String s;
+            switch (encoding) {
+                case 1: s = new String(d, textOff, textLen, StandardCharsets.UTF_16); break;     // UTF-16 + BOM
+                case 2: s = new String(d, textOff, textLen, StandardCharsets.UTF_16BE); break;   // UTF-16BE
+                case 3: s = new String(d, textOff, textLen, StandardCharsets.UTF_8); break;      // UTF-8
+                default: s = new String(d, textOff, textLen, StandardCharsets.ISO_8859_1); break; // Latin-1
+            }
+            // Coupe au premier NUL (fin de chaîne) et nettoie les NUL résiduels.
+            int nul = s.indexOf('\0');
+            if (nul >= 0) s = s.substring(0, nul);
+            return s.replace("\0", "").trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Parse le bloc VORBIS_COMMENT d'un fichier FLAC. */
+    private static void parseFlacTags(byte[] d, AudioMetadata meta) {
+        try {
+            int p = 4; // saute "fLaC"
+            while (p + 4 <= d.length) {
+                int header = d[p] & 0xFF;
+                boolean last = (header & 0x80) != 0;
+                int type = header & 0x7F;
+                int len = ((d[p + 1] & 0xFF) << 16) | ((d[p + 2] & 0xFF) << 8) | (d[p + 3] & 0xFF);
+                int body = p + 4;
+                if (type == 4) { // VORBIS_COMMENT
+                    if (body + len <= d.length) parseVorbisComment(d, body, meta);
+                    return;
+                }
+                p = body + len;
+                if (last) break;
+            }
+        } catch (Exception ignored) {
+            // best effort
+        }
+    }
+
+    /** Balises Ogg (Vorbis "comment header" ou "OpusTags") présentes en début de flux. */
+    private static void parseOggTags(byte[] head, AudioMetadata meta) {
+        try {
+            for (int i = 0; i + 8 < head.length; i++) {
+                // Vorbis : 0x03 + "vorbis" puis structure de commentaires.
+                if ((head[i] & 0xFF) == 0x03 && head[i + 1] == 'v' && head[i + 2] == 'o'
+                        && head[i + 3] == 'r' && head[i + 4] == 'b' && head[i + 5] == 'i' && head[i + 6] == 's') {
+                    parseVorbisComment(head, i + 7, meta);
+                    return;
+                }
+                // Opus : "OpusTags" puis structure de commentaires.
+                if (head[i] == 'O' && head[i + 1] == 'p' && head[i + 2] == 'u' && head[i + 3] == 's'
+                        && head[i + 4] == 'T' && head[i + 5] == 'a' && head[i + 6] == 'g' && head[i + 7] == 's') {
+                    parseVorbisComment(head, i + 8, meta);
+                    return;
+                }
+            }
+        } catch (Exception ignored) {
+            // best effort
+        }
+    }
+
+    /**
+     * Structure de commentaires Vorbis (partagée FLAC/Ogg/Opus) :
+     * [vendorLen LE][vendor][count LE]([commentLen LE][comment="KEY=VALUE" UTF-8])*.
+     */
+    private static void parseVorbisComment(byte[] d, int off, AudioMetadata meta) {
+        int p = off;
+        if (p + 4 > d.length) return;
+        long vendorLen = readUInt32LE(d, p);
+        p += 4 + (int) vendorLen;
+        if (p + 4 > d.length || vendorLen < 0) return;
+        long count = readUInt32LE(d, p);
+        p += 4;
+        for (long i = 0; i < count && p + 4 <= d.length; i++) {
+            long cLen = readUInt32LE(d, p);
+            p += 4;
+            if (cLen < 0 || p + cLen > d.length) return;
+            String comment = new String(d, p, (int) cLen, StandardCharsets.UTF_8);
+            p += (int) cLen;
+            int eq = comment.indexOf('=');
+            if (eq <= 0) continue;
+            String key = comment.substring(0, eq).trim().toUpperCase();
+            String val = comment.substring(eq + 1).trim();
+            if (val.isEmpty()) continue;
+            switch (key) {
+                case "TITLE": if (isEmpty(meta.title)) meta.title = val; break;
+                case "ARTIST": if (isEmpty(meta.artist)) meta.artist = val; break;
+                case "ALBUM": if (isEmpty(meta.album)) meta.album = val; break;
+                case "ALBUMARTIST": case "ALBUM ARTIST":
+                    if (isEmpty(meta.albumArtist)) meta.albumArtist = val; break;
+                case "TRACKNUMBER": if (meta.trackNumber <= 0) meta.trackNumber = parseLeadingInt(val); break;
+                case "DATE": case "YEAR": if (isEmpty(meta.year)) meta.year = extractYear(val); break;
+                default: break;
+            }
+        }
+    }
+
+    /** Recherche récursive de l'atome {@code ilst} (dans moov/udta/meta) et décode les balises. */
+    private static boolean findIlst(byte[] b, int start, int end, AudioMetadata meta) {
+        int p = start;
+        while (p + 8 <= end) {
+            long size = readUInt32(b, p);
+            String type = new String(b, p + 4, 4, StandardCharsets.ISO_8859_1);
+            int headerLen = 8;
+            if (size == 1) {
+                if (p + 16 > end) break;
+                size = readUInt64(b, p + 8);
+                headerLen = 16;
+            }
+            if (size < headerLen) break;
+            int body = p + headerLen;
+            int cEnd = (int) Math.min(p + size, end);
+
+            if ("ilst".equals(type)) {
+                parseIlstEntries(b, body, cEnd, meta);
+                return true;
+            } else if ("moov".equals(type) || "udta".equals(type) || "trak".equals(type)) {
+                if (findIlst(b, body, cEnd, meta)) return true;
+            } else if ("meta".equals(type)) {
+                // 'meta' est un FullBox : 4 octets version/flags avant les sous-atomes.
+                if (findIlst(b, body + 4, cEnd, meta)) return true;
+            }
+            p += (int) size;
+        }
+        return false;
+    }
+
+    private static void parseIlstEntries(byte[] b, int start, int end, AudioMetadata meta) {
+        int p = start;
+        while (p + 8 <= end) {
+            long size = readUInt32(b, p);
+            String type = new String(b, p + 4, 4, StandardCharsets.ISO_8859_1);
+            if (size < 8) break;
+            int body = p + 8;
+            int cEnd = (int) Math.min(p + size, end);
+
+            // Chaque entrée contient un sous-atome 'data'.
+            if (body + 8 <= cEnd) {
+                long dSize = readUInt32(b, body);
+                String dType = new String(b, body + 4, 4, StandardCharsets.ISO_8859_1);
+                if ("data".equals(dType) && dSize >= 16) {
+                    int dataStart = body + 16; // 8 (header) + 4 (type) + 4 (locale)
+                    int valLen = (int) dSize - 16;
+                    if (valLen > 0 && dataStart + valLen <= b.length) {
+                        handleMp4Tag(type, b, dataStart, valLen, meta);
+                    }
+                }
+            }
+            p += (int) size;
+        }
+    }
+
+    private static void handleMp4Tag(String type, byte[] b, int off, int len, AudioMetadata meta) {
+        char c0 = (char) 0xA9; // ©
+        if (type.equals(c0 + "nam")) { if (isEmpty(meta.title)) meta.title = utf8(b, off, len); }
+        else if (type.equals(c0 + "ART")) { if (isEmpty(meta.artist)) meta.artist = utf8(b, off, len); }
+        else if (type.equals(c0 + "alb")) { if (isEmpty(meta.album)) meta.album = utf8(b, off, len); }
+        else if (type.equals("aART")) { if (isEmpty(meta.albumArtist)) meta.albumArtist = utf8(b, off, len); }
+        else if (type.equals(c0 + "day")) { if (isEmpty(meta.year)) meta.year = extractYear(utf8(b, off, len)); }
+        else if (type.equals("trkn")) {
+            // trkn : [0,0, trackHi, trackLo, totalHi, totalLo, ...]
+            if (len >= 4 && meta.trackNumber <= 0) {
+                meta.trackNumber = ((b[off + 2] & 0xFF) << 8) | (b[off + 3] & 0xFF);
+            }
+        }
+    }
+
+    private static String utf8(byte[] b, int off, int len) {
+        String s = new String(b, off, len, StandardCharsets.UTF_8).replace("\0", "").trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    private static boolean isEmpty(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    private static int parseLeadingInt(String s) {
+        if (s == null) return 0;
+        int i = 0;
+        while (i < s.length() && Character.isDigit(s.charAt(i))) i++;
+        if (i == 0) return 0;
+        try {
+            return Integer.parseInt(s.substring(0, i));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** Extrait une année à 4 chiffres (19xx/20xx) d'une chaîne de date arbitraire. */
+    private static String extractYear(String s) {
+        if (s == null) return null;
+        for (int i = 0; i + 4 <= s.length(); i++) {
+            char a = s.charAt(i);
+            if ((a == '1' || a == '2')
+                    && (i + 3 < s.length())
+                    && Character.isDigit(s.charAt(i + 1))
+                    && Character.isDigit(s.charAt(i + 2))
+                    && Character.isDigit(s.charAt(i + 3))) {
+                String y = s.substring(i, i + 4);
+                if (y.startsWith("19") || y.startsWith("20")) return y;
+            }
+        }
+        return null;
     }
 
     // ---------------------------------------------------------------------------------------------
