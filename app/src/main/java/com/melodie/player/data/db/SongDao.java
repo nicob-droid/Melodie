@@ -137,4 +137,7 @@ public interface SongDao {
         public int cnt;
         public String cover;
     }
+
+    @Query("SELECT * FROM songs WHERE albumId = :albumId AND source = 'DRIVE'")
+    List<Song> getDriveSongsByAlbumIdSync(long albumId);
 }

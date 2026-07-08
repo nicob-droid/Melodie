@@ -26,15 +26,15 @@ import java.nio.charset.StandardCharsets;
 final class TrackDurationProbe {
 
     private static final String TAG = "TrackDurationProbe";
-    private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS = 30000;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 10000;
     // Petit bloc d'en-tête : suffit pour l'en-tête de trame + Xing dans la majorité des cas.
     // La TAILLE TOTALE du fichier est lue depuis l'en-tête HTTP Content-Range (fiable),
     // ce qui permet le calcul de durée des MP3 CBR sans dépendre d'une taille en base.
     // 64 Ko réduit fortement les re-lectures sur MP3 avec gros tags ID3v2 (cover embarquée),
     // tout en restant très léger côté transfert.
     private static final int HEAD_SIZE = 64 * 1024;
-    private static final int MAX_ATTEMPTS = 3;
+    private static final int MAX_ATTEMPTS = 2;
 
     static {
         // Autorise un grand pool de connexions persistantes par hôte : on enchaîne beaucoup
@@ -60,6 +60,7 @@ final class TrackDurationProbe {
         String albumArtist;
         String year;
         int trackNumber;
+        boolean authFailure;
 
         boolean hasAnyTag() {
             return notBlank(title) || notBlank(artist) || notBlank(album)
@@ -79,8 +80,12 @@ final class TrackDurationProbe {
      * @return durée en millisecondes, ou 0 si indéterminable
      */
     static long probeDurationMs(String url, String authHeader, String fileName, long fileSize) {
-        AudioMetadata meta = probeMetadata(url, authHeader, fileName, fileSize);
+        AudioMetadata meta = probeDurationMetadata(url, authHeader, fileName, fileSize);
         return meta != null ? meta.durationMs : 0L;
+    }
+
+    static AudioMetadata probeDurationMetadata(String url, String authHeader, String fileName, long fileSize) {
+        return probeMetadataInternal(url, authHeader, fileName, fileSize, false);
     }
 
     /**
@@ -88,19 +93,15 @@ final class TrackDurationProbe {
      * des mêmes octets d'en-tête, sans requête réseau supplémentaire dans la plupart des cas.
      */
     static AudioMetadata probeMetadata(String url, String authHeader, String fileName, long fileSize) {
-        AudioMetadata meta = new AudioMetadata();
-        HttpURLConnection baseConn = null;
-        try {
-            // Crée UNE SEULE connexion HTTP réutilisable pour ce fichier.
-            // Cela économise les handshakes TLS/TCP et réduit drastiquement la latence.
-            baseConn = (HttpURLConnection) new URL(url).openConnection();
-            baseConn.setRequestMethod("GET");
-            baseConn.setRequestProperty("Authorization", authHeader);
-            baseConn.setRequestProperty("Accept-Encoding", "identity");
-            baseConn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            baseConn.setReadTimeout(READ_TIMEOUT_MS);
+        return probeMetadataInternal(url, authHeader, fileName, fileSize, true);
+    }
 
-            Range headRange = rangeGetRWithConn(url, authHeader, 0, HEAD_SIZE, baseConn);
+    private static AudioMetadata probeMetadataInternal(String url, String authHeader,
+                                                       String fileName, long fileSize,
+                                                       boolean includeTags) {
+        AudioMetadata meta = new AudioMetadata();
+        try {
+            Range headRange = rangeGetR(url, authHeader, 0, HEAD_SIZE);
             byte[] head = headRange != null ? headRange.data : null;
             if (head == null || head.length < 12) return meta;
 
@@ -116,30 +117,41 @@ final class TrackDurationProbe {
             if (head[0] == 'f' && head[1] == 'L' && head[2] == 'a' && head[3] == 'C') {
                 format = "flac";
                 duration = parseFlac(head);
-                parseFlacTags(head, meta);
+                if (includeTags) parseFlacTags(head, meta);
             } else if (head[0] == 'R' && head[1] == 'I' && head[2] == 'F' && head[3] == 'F'
                     && head[8] == 'W' && head[9] == 'A' && head[10] == 'V' && head[11] == 'E') {
                 format = "wav";
                 duration = parseWav(head);
             } else if (head.length >= 8 && head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p') {
                 format = "mp4";
-                duration = parseMp4WithTags(url, authHeader, head, realSize, baseConn, meta);
+                duration = includeTags
+                        ? parseMp4WithTags(url, authHeader, head, realSize, null, meta)
+                        : parseMp4(url, authHeader, head, realSize, null);
             } else if (head[0] == 'O' && head[1] == 'g' && head[2] == 'g' && head[3] == 'S') {
                 format = "ogg";
-                duration = parseOgg(url, authHeader, head, realSize, baseConn);
-                parseOggTags(head, meta);
+                duration = parseOgg(url, authHeader, head, realSize, null);
+                if (includeTags) parseOggTags(head, meta);
             } else {
                 format = "mp3";
-                duration = parseMp3(url, authHeader, head, realSize, baseConn);
-                parseId3v2Tags(url, authHeader, head, meta);
+                duration = parseMp3(url, authHeader, head, realSize, null);
+                if (includeTags) parseId3v2Tags(url, authHeader, head, meta);
                 if (duration <= 0) {
                     // Repli sur l'extension pour les conteneurs non détectés par signature.
-                    if (lower.endsWith(".flac")) { format = "flac?"; duration = parseFlac(head); parseFlacTags(head, meta); }
+                    if (lower.endsWith(".flac")) {
+                        format = "flac?";
+                        duration = parseFlac(head);
+                        if (includeTags) parseFlacTags(head, meta);
+                    }
                     else if (lower.endsWith(".wav")) { format = "wav?"; duration = parseWav(head); }
                     else if (lower.endsWith(".m4a") || lower.endsWith(".mp4") || lower.endsWith(".aac")) {
-                        format = "mp4?"; duration = parseMp4WithTags(url, authHeader, head, realSize, baseConn, meta);
+                        format = "mp4?";
+                        duration = includeTags
+                                ? parseMp4WithTags(url, authHeader, head, realSize, null, meta)
+                                : parseMp4(url, authHeader, head, realSize, null);
                     } else if (lower.endsWith(".ogg") || lower.endsWith(".opus")) {
-                        format = "ogg?"; duration = parseOgg(url, authHeader, head, realSize, baseConn); parseOggTags(head, meta);
+                        format = "ogg?";
+                        duration = parseOgg(url, authHeader, head, realSize, null);
+                        if (includeTags) parseOggTags(head, meta);
                     }
                 }
             }
@@ -150,6 +162,9 @@ final class TrackDurationProbe {
             }
             return meta;
         } catch (Exception e) {
+            if (isUnauthorizedError(e)) {
+                meta.authFailure = true;
+            }
             Log.w(TAG, "probe failed for " + fileName + ": " + e.getMessage());
             return meta;
         }
@@ -186,6 +201,9 @@ final class TrackDurationProbe {
             try {
                 return doRangeGet(url, authHeader, start, length);
             } catch (IOException e) {
+                if (isUnauthorizedError(e)) {
+                    throw e;
+                }
                 last = e;
                 // Backoff léger : laisse retomber un éventuel throttling de Drive avant de réessayer.
                 try {
@@ -200,26 +218,12 @@ final class TrackDurationProbe {
     }
 
     /**
-     * Version de rangeGetR qui réutilise une HttpURLConnection existante.
-     * Cela économise les handshakes TLS et améliore la latence.
+     * Compat legacy: un objet HttpURLConnection ne peut pas être réutilisé pour plusieurs
+     * requêtes Range. On ouvre une nouvelle connexion à chaque appel; le keep-alive JVM
+     * réutilise automatiquement les sockets au niveau du pool HTTP.
      */
     private static Range rangeGetRWithConn(String url, String authHeader, long start, int length, HttpURLConnection baseConn) throws IOException {
-        IOException last = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                return doRangeGetWithConn(url, authHeader, start, length, baseConn);
-            } catch (IOException e) {
-                last = e;
-                // Backoff léger : laisse retomber un éventuel throttling de Drive avant de réessayer.
-                try {
-                    Thread.sleep(200L * attempt);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("interrupted", ie);
-                }
-            }
-        }
-        throw last != null ? last : new IOException("range request failed");
+        return rangeGetR(url, authHeader, start, length);
     }
 
     private static Range doRangeGet(String url, String authHeader, long start, int length) throws IOException {
@@ -233,6 +237,10 @@ final class TrackDurationProbe {
             conn.setReadTimeout(READ_TIMEOUT_MS);
 
             int code = conn.getResponseCode();
+            if (code == HttpURLConnection.HTTP_UNAUTHORIZED) {
+                drainAndClose(conn.getErrorStream());
+                throw new IOException("HTTP 401 Unauthorized");
+            }
             if (code != HttpURLConnection.HTTP_PARTIAL && code != HttpURLConnection.HTTP_OK) {
                 // Draine le flux d'erreur pour permettre la réutilisation de la connexion.
                 drainAndClose(conn.getErrorStream());
@@ -259,40 +267,6 @@ final class TrackDurationProbe {
         }
     }
 
-    /**
-     * Effectue une requête Range en réutilisant une HttpURLConnection existante.
-     * Cela économise les handshakes TLS/TCP et améliore drastiquement la latence.
-     */
-    private static Range doRangeGetWithConn(String url, String authHeader, long start, int length, HttpURLConnection baseConn) throws IOException {
-        try {
-            // Utilise la connexion existante (déjà configurée avec auth, timeouts, etc.)
-            // pour faire la requête Range. Cela établit la socket TCP/TLS qu'on veut réutiliser.
-            baseConn.setRequestProperty("Range", "bytes=" + start + "-" + (start + length - 1));
-
-            int code = baseConn.getResponseCode();
-            if (code != HttpURLConnection.HTTP_PARTIAL && code != HttpURLConnection.HTTP_OK) {
-                drainAndClose(baseConn.getErrorStream());
-                return null;
-            }
-
-            long total = parseTotalSize(baseConn.getHeaderField("Content-Range"));
-
-            ByteArrayOutputStream bos = new ByteArrayOutputStream(Math.min(length, 64 * 1024));
-            byte[] buf = new byte[8192];
-            // On lit la réponse en ENTIER (bornée par la plage demandée) : consommer tout le
-            // corps est indispensable pour que HttpURLConnection remette la socket dans le
-            // pool keep-alive au lieu de la fermer.
-            try (InputStream in = baseConn.getInputStream()) {
-                int r;
-                while ((r = in.read(buf)) != -1) {
-                    bos.write(buf, 0, r);
-                }
-            }
-            return new Range(bos.toByteArray(), total);
-        } catch (IOException e) {
-            throw e;
-        }
-    }
 
     /** Extrait la taille totale d'un en-tête "Content-Range: bytes start-end/total". */
     private static long parseTotalSize(String contentRange) {
@@ -318,6 +292,12 @@ final class TrackDurationProbe {
         } catch (IOException ignored) {
             // ignore
         }
+    }
+
+    private static boolean isUnauthorizedError(Throwable t) {
+        if (t == null) return false;
+        String msg = t.getMessage();
+        return msg != null && msg.contains("401");
     }
 
     // ---------------------------------------------------------------------------------------------

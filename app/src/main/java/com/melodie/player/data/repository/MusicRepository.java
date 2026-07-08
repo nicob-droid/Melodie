@@ -26,6 +26,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
@@ -50,6 +51,7 @@ public class MusicRepository {
     private static final String LOCAL_SOURCE_TREE_URI = "local://music";
     private static final String LOCAL_SOURCE_DISPLAY_NAME = "Téléphone / Music";
     private static final String FAVORITES_PLAYLIST_NAME = "Favorites";
+    private static final String COVER_LOOKUP_TAG = "COVER_LOOKUP";
 
     private final Context context;
     private final SongDao songDao;
@@ -402,26 +404,39 @@ public class MusicRepository {
                   
                   // Si la pochette est déjà une URI locale (content:// ou file://), ne pas chercher en ligne
                   boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
+                  boolean unresolvedRemoteCover = NO_REMOTE_COVER.equals(currentCover);
+                  boolean artistReliableForLookup = !isUnknownArtistValue(album.artist);
                   // force=true est déclenché par un échec de chargement Glide (la pochette locale
                   // content:// est cassée/absente) : dans ce cas on DOIT chercher en ligne même si
                   // l'URI actuelle ressemble à une pochette locale.
-                  boolean needsCoverLookup = force || (!hasLocalCover && currentCover.isEmpty());
+                  boolean needsCoverLookup = force
+                          || (!hasLocalCover && currentCover.isEmpty())
+                          || (!hasLocalCover && unresolvedRemoteCover && artistReliableForLookup);
 
                   boolean needsReleaseDateLookup = currentReleaseDate.isEmpty();
                   if (!needsCoverLookup && !needsReleaseDateLookup) {
                      return;
                   }
 
-                  if (needsCoverLookup) {
+                  if (needsCoverLookup && artistReliableForLookup) {
+                      android.util.Log.d(COVER_LOOKUP_TAG,
+                              "start albumId=" + album.id + " artist=" + album.artist + " album=" + album.name);
                       String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
                       if (remoteCover != null && !remoteCover.isEmpty()) {
                           albumDao.updateCover(album.id, remoteCover);
+                          android.util.Log.d(COVER_LOOKUP_TAG,
+                                  "success albumId=" + album.id + " cover=" + remoteCover);
                       } else if (force || currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover)) {
                           // Aucun résultat distant : on mémorise l'absence (sentinel) pour éviter de
                           // retenter en boucle, y compris quand la pochette locale (content://) est
                           // cassée et a échoué côté Glide (force=true).
                           albumDao.updateCover(album.id, NO_REMOTE_COVER);
+                          android.util.Log.d(COVER_LOOKUP_TAG,
+                                  "miss albumId=" + album.id + " artist=" + album.artist + " album=" + album.name);
                       }
+                  } else if (needsCoverLookup) {
+                      android.util.Log.d(COVER_LOOKUP_TAG,
+                              "skip albumId=" + album.id + " reason=unreliable_artist artist=" + album.artist);
                   }
 
                   if (needsReleaseDateLookup) {
@@ -455,15 +470,25 @@ public class MusicRepository {
                        boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
                        
                        boolean needsCoverLookup = !hasLocalCover && (currentCover.isEmpty() || NO_REMOTE_COVER.equals(currentCover));
-                       if (needsCoverLookup) {
+                       boolean artistReliableForLookup = !isUnknownArtistValue(album.artist);
+                       if (needsCoverLookup && artistReliableForLookup) {
+                           android.util.Log.d(COVER_LOOKUP_TAG,
+                                   "start albumId=" + album.id + " artist=" + album.artist + " album=" + album.name);
                            String remoteCover = coverArtFetcher.fetchAlbumCover(album.artist, album.name);
                            if (remoteCover != null && !remoteCover.isEmpty()) {
                                albumDao.updateCover(album.id, remoteCover);
+                               android.util.Log.d(COVER_LOOKUP_TAG,
+                                       "success albumId=" + album.id + " cover=" + remoteCover);
                            } else {
                                // Toujours rien trouve : on (re)pose le sentinel pour eviter de
                                // retenter a chaque affichage de la liste.
                                albumDao.updateCover(album.id, NO_REMOTE_COVER);
+                               android.util.Log.d(COVER_LOOKUP_TAG,
+                                       "miss albumId=" + album.id + " artist=" + album.artist + " album=" + album.name);
                            }
+                       } else if (needsCoverLookup) {
+                           android.util.Log.d(COVER_LOOKUP_TAG,
+                                   "skip albumId=" + album.id + " reason=unreliable_artist artist=" + album.artist);
                        }
 
                        if (album.releaseDate == null || album.releaseDate.trim().isEmpty()) {
@@ -484,6 +509,17 @@ public class MusicRepository {
      * soient re-cherchées UNE seule fois lors du prochain affichage de la liste.
      * À appeler une fois au démarrage de l'application.
      */
+    /**
+     * Efface les pochettes des albums dont l'artiste vient d'être corrigé (propagation).
+     * Cela force une re-recherche avec le bon nom d'artiste au prochain prefetch UI.
+     */
+    public void invalidateCoversForAlbums(Set<Long> albumIds) {
+        if (albumIds == null || albumIds.isEmpty()) return;
+        for (long id : albumIds) {
+            albumDao.updateCover(id, null);
+        }
+    }
+
     public void retryMissingCoversOnStartup() {
         executor.execute(() -> {
             try {
@@ -584,7 +620,7 @@ public class MusicRepository {
                  saved = savedAlbumsBySignature.get(albumSignature(album.artist, album.name));
              }
              if (saved != null) {
-                 if (shouldUseSavedCover(album.cover, saved.cover)) {
+                  if (shouldUseSavedCover(album.cover, saved.cover, album.artist)) {
                      album.cover = saved.cover != null ? saved.cover.trim() : null;
                  }
                  // Préserver la date de sortie de l'album sauvegardé
@@ -672,7 +708,7 @@ public class MusicRepository {
           return value.trim().toLowerCase();
       }
 
-        private boolean shouldUseSavedCover(String currentCover, String savedCover) {
+        private boolean shouldUseSavedCover(String currentCover, String savedCover, String artist) {
             String current = currentCover != null ? currentCover.trim() : "";
             String saved = savedCover != null ? savedCover.trim() : "";
             if (saved.isEmpty()) return false;
@@ -682,7 +718,11 @@ public class MusicRepository {
 
             // Preserve the "no remote cover" sentinel to avoid repeated remote lookups
             // when local content:// albumart keeps failing.
-            if (NO_REMOTE_COVER.equals(saved) && (current.isEmpty() || isContentCover(current))) return true;
+            if (NO_REMOTE_COVER.equals(saved)
+                    && (current.isEmpty() || isContentCover(current))
+                    && isUnknownArtistValue(artist)) {
+                return true;
+            }
 
             return current.isEmpty();
         }
@@ -693,6 +733,12 @@ public class MusicRepository {
 
         private boolean isContentCover(String cover) {
             return cover != null && cover.trim().startsWith("content://");
+        }
+
+        private boolean isUnknownArtistValue(String artist) {
+            if (artist == null) return true;
+            String v = artist.trim();
+            return v.isEmpty() || "Artiste inconnu".equalsIgnoreCase(v) || "Unknown artist".equalsIgnoreCase(v);
         }
 }
 

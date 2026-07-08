@@ -52,6 +52,7 @@ import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
@@ -85,7 +86,15 @@ public class DriveRepository {
     // Extraction des durées : nombre d'extractions réseau menées en parallèle.
     // Chaque extraction ne fait qu'une petite requête HTTP Range (16 Ko, keep-alive) ;
     // concurrence modérée pour rester rapide sans se faire throttler par Google Drive.
-    private static final int DURATION_ENRICH_THREADS = 8;
+    private static final int DURATION_ENRICH_THREADS = Math.max(
+            8,
+            Math.min(24, Runtime.getRuntime().availableProcessors() * 3));
+
+    // Les probes tags font plus d'I/O et de mises à jour DB que la durée-only.
+    // Pool plus modéré pour limiter les interruptions de process sur appareils contraints.
+    private static final int TAG_ENRICH_THREADS = Math.max(
+            4,
+            Math.min(12, Runtime.getRuntime().availableProcessors() * 2));
 
     // Découverte « Partagé avec moi » : nombre de dossiers parents interrogés par requête
     // (BFS par niveau groupé) pour limiter le nombre d'allers-retours réseau.
@@ -125,6 +134,12 @@ public class DriveRepository {
     private volatile long lastTokenRefreshMs = 0L;
     private volatile boolean durationEnrichmentRunning = false;
     private volatile boolean durationEnrichmentRerunRequested = false;
+    private volatile boolean tagEnrichmentRunning = false;
+    private volatile boolean tagEnrichmentRerunRequested = false;
+    /** Positionné à true dès que scheduleTagEnrichmentSafely() est appelé, remis à false
+     *  quand enrichDriveTagsBackground démarre vraiment — pour éviter la race condition
+     *  où waitForAllEnrichmentCompletion() reviendrait trop tôt. */
+    private volatile boolean tagEnrichmentScheduled = false;
     private volatile boolean bootstrapSyncInProgress = false;
     private GoogleSignInClient googleSignInClient;
     private volatile boolean listFoldersInProgress = false;
@@ -152,6 +167,7 @@ public class DriveRepository {
         initializeGoogleSignIn();
         restorePersistedSession();
         refreshSessionSilentlyIfPossible();
+        resumePendingDriveEnrichmentIfNeeded();
     }
 
     private void bootstrapDriveSync(Map<DriveFolder, String> foldersToSync,
@@ -1115,8 +1131,8 @@ public class DriveRepository {
                     }
                 }
 
-                // La progression reste active tant que l'enrichissement des durées n'est pas terminé.
-                waitForDurationEnrichmentCompletion();
+                // Attend la fin de l'enrichissement des durées ET des tags avant de fermer la barre.
+                waitForAllEnrichmentCompletion();
 
                 // Marque la version de logique de métadonnées comme appliquée : évite de
                 // re-bootstrapper à chaque synchro suivante.
@@ -1126,6 +1142,8 @@ public class DriveRepository {
             } finally {
                 isLoading.postValue(false);
                 isSyncing.postValue(false);
+                // waitForAllEnrichmentCompletion() garantit qu'on n'arrive ici
+                // qu'une fois les tags terminés : on ferme systématiquement la barre.
                 syncProgress.postValue(null);
                 if (onDone != null) onDone.run();
             }
@@ -1133,10 +1151,9 @@ public class DriveRepository {
     }
 
     /**
-     * Renseigne proactivement la durée des morceaux Google Drive dont la durée est encore
-     * inconnue (0). Chaque durée est décodée depuis l'en-tête du conteneur (quelques Ko lus
-     * via requêtes HTTP Range, voir {@link TrackDurationProbe}), en parallèle. La table
-     * albums est reconstruite à la fin si au moins une durée a été récupérée.
+     * Stratégie turbo en 2 passages:
+     *  1) passe bloquante durée-only (rapide) pour rendre la bibliothèque utilisable vite ;
+     *  2) passe tags en arrière-plan (optionnelle) pour enrichir titre/artiste/année.
      */
     private void enrichDriveDurations() {
         final String token = driveAccessToken;
@@ -1160,11 +1177,6 @@ public class DriveRepository {
             durationEnrichmentRerunRequested = false;
         }
 
-        // Instantané des morceaux à enrichir : durée inconnue OU artiste encore sur la valeur
-        // de repli (balises jamais lues). On itère sur cet instantané sans re-requêter, ce qui
-        // évite toute boucle infinie sur les fichiers dont l'extraction échoue. Couvrir aussi
-        // les morceaux « Artiste inconnu » garantit qu'un re-bootstrap (qui réutilise les durées
-        // déjà calculées) relit bien leurs balises au lieu de les laisser non taggés.
         final List<Song> pending =
                 songDao.getDriveSongsNeedingEnrichmentSync(UNKNOWN_ARTIST, Integer.MAX_VALUE);
         if (pending == null || pending.isEmpty()) {
@@ -1172,9 +1184,22 @@ public class DriveRepository {
             return;
         }
 
-        final int total = pending.size();
-        Log.d(TAG, "Duration enrichment: " + total + " Drive songs (parallel x" + DURATION_ENRICH_THREADS + ")");
-        postSyncProgress("duration", 0, total, 0, total, null);
+        final List<Song> durationPending = new ArrayList<>();
+        for (Song s : pending) {
+            if (s != null && s.duration <= 0L) {
+                durationPending.add(s);
+            }
+        }
+
+        if (durationPending.isEmpty()) {
+            synchronized (this) { durationEnrichmentRunning = false; }
+            scheduleTagEnrichmentSafely();
+            return;
+        }
+
+        final int total = durationPending.size();
+        Log.d(TAG, "Duration fast-pass: " + total + " Drive songs (parallel x" + DURATION_ENRICH_THREADS + ")");
+        postSyncProgress("duration_fast", 0, total, 0, total, null);
 
         // Pool dédié : on ne bloque pas l'executor de sync et on traite plusieurs fichiers
         // en parallèle pour masquer la latence réseau de chaque extraction.
@@ -1187,7 +1212,7 @@ public class DriveRepository {
         // Rebuild unique en fin de batch: évite de reconstruire toute la table albums
         // des dizaines de fois pendant l'enrichissement (coût CPU/DB + bruit CoverDebug).
 
-        for (Song song : pending) {
+        for (Song song : durationPending) {
             final Song s = song;
             pool.execute(() -> {
                 try {
@@ -1200,13 +1225,11 @@ public class DriveRepository {
                     long fileSize = audio != null ? audio.fileSize : 0L;
 
                     long probeStartMs = System.currentTimeMillis();
-                    TrackDurationProbe.AudioMetadata meta =
-                            extractDriveMetadata(fileId, fileName, fileSize, token);
+                    long durationMs = extractDriveDuration(fileId, fileName, fileSize, null);
                     long probeMs = System.currentTimeMillis() - probeStartMs;
                     totalProbeMs.addAndGet(probeMs);
                     probeLatenciesMs.add(probeMs);
 
-                    long durationMs = meta != null ? meta.durationMs : 0L;
                     boolean changed = false;
 
                     if (durationMs > 0L) {
@@ -1216,12 +1239,6 @@ public class DriveRepository {
                             audio.durationMs = durationMs;
                             driveAudioDao.update(audio);
                         }
-                    }
-
-                    // Remplace les métadonnées devinées à partir des noms de dossiers/fichiers
-                    // par les vraies balises embarquées (ID3v2 / Vorbis / iTunes) quand présentes.
-                    if (meta != null && meta.hasAnyTag()) {
-                        changed |= applyTagsToSong(s, meta);
                     }
 
                     if (changed) {
@@ -1236,35 +1253,282 @@ public class DriveRepository {
                 } finally {
                     int left = remaining.decrementAndGet();
                     int doneTasks = total - Math.max(left, 0);
-                    postSyncProgress("duration", doneTasks, total, doneTasks, total, null);
+                    postSyncProgress("duration_fast", doneTasks, total, doneTasks, total, null);
 
                     if (left == 0) {
-                        int done = updated.get();
-                        long avgProbeMs = totalProbeMs.get() / Math.max(total, 1);
-                        long p95ProbeMs = percentile95(probeLatenciesMs);
-                        Log.d(DRIVE_SYNC_TAG,
-                                "DURATION_FALLBACK count=" + total
-                                        + " updated=" + done
-                                        + " failed=" + failed.get()
-                                        + " avgMs=" + avgProbeMs
-                                        + " p95Ms=" + p95ProbeMs);
-                        if (done > 0) {
-                            musicRepository.rebuildAlbumsFromSongs();
+                        boolean rerun = false;
+                        try {
+                            int done = updated.get();
+                            long avgProbeMs = totalProbeMs.get() / Math.max(total, 1);
+                            long p95ProbeMs = percentile95(probeLatenciesMs);
+                            Log.d(DRIVE_SYNC_TAG,
+                                    "DURATION_FASTPASS count=" + total
+                                            + " updated=" + done
+                                            + " failed=" + failed.get()
+                                            + " avgMs=" + avgProbeMs
+                                            + " p95Ms=" + p95ProbeMs);
+                            if (done > 0) {
+                                musicRepository.rebuildAlbumsFromSongs();
+                            }
+                            pool.shutdown();
+                        } catch (Exception finalizeError) {
+                            Log.e(TAG, "Duration fast-pass finalize failed", finalizeError);
+                        } finally {
+                            synchronized (DriveRepository.this) {
+                                rerun = durationEnrichmentRerunRequested;
+                                durationEnrichmentRerunRequested = false;
+                                durationEnrichmentRunning = false;
+                            }
                         }
-                        pool.shutdown();
 
-                        boolean rerun;
-                        synchronized (DriveRepository.this) {
-                            rerun = durationEnrichmentRerunRequested;
-                            durationEnrichmentRerunRequested = false;
-                            durationEnrichmentRunning = false;
-                        }
+                        scheduleTagEnrichmentSafely();
                         if (rerun) {
-                            executor.execute(DriveRepository.this::enrichDriveDurations);
+                            scheduleDurationEnrichmentSafely();
                         }
                     }
                 }
             });
+        }
+    }
+
+    private void enrichDriveTagsBackground() {
+        final String token = driveAccessToken;
+        if (token == null || token.trim().isEmpty()) {
+            return;
+        }
+
+        synchronized (this) {
+            if (bootstrapSyncInProgress) {
+                tagEnrichmentScheduled = false;
+                tagEnrichmentRerunRequested = true;
+                return;
+            }
+            if (tagEnrichmentRunning) {
+                tagEnrichmentScheduled = false;
+                tagEnrichmentRerunRequested = true;
+                return;
+            }
+            tagEnrichmentScheduled = false;
+            tagEnrichmentRunning = true;
+            tagEnrichmentRerunRequested = false;
+        }
+
+        final List<Song> pending =
+                songDao.getDriveSongsNeedingEnrichmentSync(UNKNOWN_ARTIST, Integer.MAX_VALUE);
+        final List<Song> tagsPending = new ArrayList<>();
+        if (pending != null) {
+            for (Song s : pending) {
+                if (s != null && UNKNOWN_ARTIST.equals(s.artist)) {
+                    tagsPending.add(s);
+                }
+            }
+        }
+
+        if (tagsPending.isEmpty()) {
+            synchronized (this) {
+                tagEnrichmentRunning = false;
+                tagEnrichmentRerunRequested = false;
+            }
+            return;
+        }
+
+        final int total = tagsPending.size();
+        // Taille des lots intermédiaires : rebuild albums + covers au fil de l'eau toutes les N tâches
+        // pour que les pochettes et artistes apparaissent progressivement dans l'UI.
+        final int REBUILD_BATCH_SIZE = Math.max(10, total / 10);
+        Log.d(TAG, "Tag background pass: " + total + " Drive songs (parallel x" + TAG_ENRICH_THREADS
+                + ", rebuild every " + REBUILD_BATCH_SIZE + ")");
+        final ExecutorService pool = Executors.newFixedThreadPool(TAG_ENRICH_THREADS);
+        final AtomicInteger remaining = new AtomicInteger(total);
+        final AtomicInteger updated = new AtomicInteger(0);
+        final AtomicInteger failed = new AtomicInteger(0);
+        // Compte les tâches terminées depuis le dernier rebuild intermédiaire.
+        final AtomicInteger donesSinceLastRebuild = new AtomicInteger(0);
+        postSyncProgress("tags", 0, total, 0, total, null);
+
+        for (Song song : tagsPending) {
+            final Song s = song;
+            pool.execute(() -> {
+                try {
+                    if (s == null) return;
+                    String fileId = extractDriveFileIdFromSong(s);
+                    if (fileId == null) return;
+
+                    DriveAudio audio = driveAudioDao.getById(fileId);
+                    String fileName = audio != null ? audio.fileName : s.title;
+                    long fileSize = audio != null ? audio.fileSize : 0L;
+                    TrackDurationProbe.AudioMetadata meta =
+                            extractDriveMetadata(fileId, fileName, fileSize, null);
+
+                    boolean changed = false;
+                    if (meta != null && meta.hasAnyTag()) {
+                        changed = applyTagsToSong(s, meta);
+                    }
+                    if (meta != null && s.duration <= 0L && meta.durationMs > 0L) {
+                        s.duration = meta.durationMs;
+                        changed = true;
+                    }
+
+                    if (changed) {
+                        songDao.update(s);
+                        updated.incrementAndGet();
+                    } else {
+                        failed.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    failed.incrementAndGet();
+                    Log.w(TAG, "Tag task failed: " + e.getMessage());
+                } finally {
+                    int left = remaining.decrementAndGet();
+                    int done = total - left;
+                    postSyncProgress("tags", done, total, done, total, null);
+
+                    // Rebuild intermédiaire : rafraîchit les albums/pochettes dans l'UI au fil de l'eau.
+                    int batchDone = donesSinceLastRebuild.incrementAndGet();
+                    if (batchDone >= REBUILD_BATCH_SIZE || left == 0) {
+                        donesSinceLastRebuild.set(0);
+                        if (updated.get() > 0) {
+                            musicRepository.rebuildAlbumsFromSongs();
+                        }
+                    }
+
+                    if (left == 0) {
+                        // Passe de propagation d'artiste par dossier : si tous les fichiers d'un
+                        // même albumId ont été traités mais que certains restent "Artiste inconnu"
+                        // alors qu'au moins un morceau du même dossier a un artiste connu, on le propage.
+                        int propagated = propagateArtistWithinAlbums();
+                        if (propagated > 0) {
+                            Log.d(DRIVE_SYNC_TAG, "ARTIST_PROPAGATION propagated=" + propagated + " songs");
+                            musicRepository.rebuildAlbumsFromSongs();
+                        }
+
+                        Log.d(DRIVE_SYNC_TAG,
+                                "TAGS_BACKGROUND count=" + total
+                                        + " updated=" + updated.get()
+                                        + " failed=" + failed.get()
+                                        + " propagated=" + propagated);
+                        pool.shutdown();
+
+                        // syncProgress est fermé par waitForAllEnrichmentCompletion() côté syncSelectedFolders.
+                        boolean rerun = false;
+                        synchronized (DriveRepository.this) {
+                            rerun = tagEnrichmentRerunRequested;
+                            tagEnrichmentRerunRequested = false;
+                            tagEnrichmentRunning = false;
+                        }
+                        if (rerun) {
+                            scheduleTagEnrichmentSafely();
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Propage l'artiste connu d'un album Drive à tous les morceaux du même albumId encore
+     * marqués "Artiste inconnu". Invalide aussi la pochette de ces albums pour forcer un
+     * re-fetch avec le bon nom d'artiste. Appelé en fin de passe tags.
+     *
+     * @return nombre de morceaux mis à jour.
+     */
+    private int propagateArtistWithinAlbums() {
+        int count = 0;
+        try {
+            // Récupère tous les morceaux Drive encore inconnus.
+            List<Song> unknowns = songDao.getDriveSongsNeedingEnrichmentSync(UNKNOWN_ARTIST, Integer.MAX_VALUE);
+            if (unknowns == null || unknowns.isEmpty()) return 0;
+
+            // Groupe par albumId pour éviter des requêtes DB en boucle.
+            Map<Long, List<Song>> byAlbum = new HashMap<>();
+            for (Song s : unknowns) {
+                if (s != null && UNKNOWN_ARTIST.equals(s.artist)) {
+                    byAlbum.computeIfAbsent(s.albumId, k -> new ArrayList<>()).add(s);
+                }
+            }
+
+            Set<Long> albumsWithPropagation = new java.util.HashSet<>();
+
+            for (Map.Entry<Long, List<Song>> entry : byAlbum.entrySet()) {
+                long albumId = entry.getKey();
+                List<Song> unknown = entry.getValue();
+
+                // Cherche un artiste connu parmi tous les morceaux du même dossier.
+                List<Song> allInAlbum = songDao.getDriveSongsByAlbumIdSync(albumId);
+                String knownArtist = null;
+                if (allInAlbum != null) {
+                    for (Song sibling : allInAlbum) {
+                        if (sibling != null
+                                && sibling.artist != null
+                                && !UNKNOWN_ARTIST.equals(sibling.artist)
+                                && !sibling.artist.trim().isEmpty()) {
+                            knownArtist = sibling.artist.trim();
+                            break;
+                        }
+                    }
+                }
+                if (knownArtist == null) continue;
+
+                // Propage l'artiste à tous les morceaux inconnus du même dossier.
+                for (Song s : unknown) {
+                    s.artist = knownArtist;
+                    songDao.update(s);
+                    count++;
+                }
+                albumsWithPropagation.add(albumId);
+            }
+
+            // Efface les pochettes des albums re-propagés pour forcer un re-fetch
+            // avec le bon nom d'artiste (les anciennes covers étaient fetchées sous "Artiste inconnu").
+            if (!albumsWithPropagation.isEmpty()) {
+                musicRepository.invalidateCoversForAlbums(albumsWithPropagation);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Artist propagation failed: " + e.getMessage());
+        }
+        return count;
+    }
+
+    /**
+     * Attend la fin de l'enrichissement durée ET tags avant de rendre la main.
+     * Couvre la race condition où tagEnrichmentScheduled=true mais tagEnrichmentRunning=false.
+     */
+    private void waitForAllEnrichmentCompletion() {
+        final long timeoutMs = 20L * 60L * 1000L;
+        final long startMs = System.currentTimeMillis();
+        while (true) {
+            boolean durationRunning;
+            boolean durationRerun;
+            boolean tagsScheduled;
+            boolean tagsRunning;
+            boolean tagsRerun;
+            synchronized (this) {
+                durationRunning = durationEnrichmentRunning;
+                durationRerun = durationEnrichmentRerunRequested;
+                tagsScheduled = tagEnrichmentScheduled;
+                tagsRunning = tagEnrichmentRunning;
+                tagsRerun = tagEnrichmentRerunRequested;
+            }
+            if (!durationRunning && !durationRerun && !tagsScheduled && !tagsRunning && !tagsRerun) {
+                return;
+            }
+            if (System.currentTimeMillis() - startMs > timeoutMs) {
+                Log.w(TAG, "Timeout waiting for all enrichment — forcing stop");
+                synchronized (this) {
+                    durationEnrichmentRunning = false;
+                    durationEnrichmentRerunRequested = false;
+                    tagEnrichmentScheduled = false;
+                    tagEnrichmentRunning = false;
+                    tagEnrichmentRerunRequested = false;
+                }
+                return;
+            }
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -1284,7 +1548,13 @@ public class DriveRepository {
                 return;
             }
             if (System.currentTimeMillis() - startMs > timeoutMs) {
-                Log.w(TAG, "Timeout waiting for duration enrichment completion");
+                Log.w(TAG, "Timeout waiting for duration enrichment completion, forcing rerun");
+                synchronized (this) {
+                    durationEnrichmentRunning = false;
+                    durationEnrichmentRerunRequested = true;
+                }
+                scheduleDurationEnrichmentSafely();
+                scheduleTagEnrichmentSafely();
                 return;
             }
             try {
@@ -1303,6 +1573,39 @@ public class DriveRepository {
                                   int tracksTotal,
                                   String currentFolderName) {
         syncProgress.postValue(new SyncProgressState(phase, current, total, tracksDone, tracksTotal, currentFolderName));
+    }
+
+    private void scheduleDurationEnrichmentSafely() {
+        try {
+            executor.execute(this::enrichDriveDurations);
+        } catch (RejectedExecutionException e) {
+            Log.e(TAG, "Duration enrichment scheduling rejected", e);
+            synchronized (this) {
+                durationEnrichmentRunning = false;
+            }
+        }
+    }
+
+    private void scheduleTagEnrichmentSafely() {
+        try {
+            tagEnrichmentScheduled = true;   // marque avant d'envoyer pour éviter la race condition
+            executor.execute(this::enrichDriveTagsBackground);
+        } catch (RejectedExecutionException e) {
+            tagEnrichmentScheduled = false;
+            Log.e(TAG, "Tag enrichment scheduling rejected", e);
+            synchronized (this) {
+                tagEnrichmentRunning = false;
+            }
+        }
+    }
+
+    private void resumePendingDriveEnrichmentIfNeeded() {
+        try {
+            scheduleDurationEnrichmentSafely();
+            scheduleTagEnrichmentSafely();
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to resume pending Drive enrichment", e);
+        }
     }
 
     public static final class SyncProgressState {
@@ -1370,8 +1673,31 @@ public class DriveRepository {
      * MediaMetadataRetriever (qui streame le média et est bien trop lent sur des URL HTTP).
      */
     private long extractDriveDuration(String fileId, String fileName, long fileSize, String accessToken) {
-        TrackDurationProbe.AudioMetadata meta = extractDriveMetadata(fileId, fileName, fileSize, accessToken);
-        return meta != null ? meta.durationMs : 0L;
+        if (fileId == null || fileId.trim().isEmpty()) return 0L;
+        String url = "https://www.googleapis.com/drive/v3/files/" + fileId.trim() + "?alt=media";
+
+        String token = accessToken;
+        if (token == null || token.trim().isEmpty()) {
+            token = driveAccessToken;
+        }
+        if (token == null || token.trim().isEmpty()) {
+            return 0L;
+        }
+
+        TrackDurationProbe.AudioMetadata result =
+                TrackDurationProbe.probeDurationMetadata(url, "Bearer " + token.trim(), fileName, fileSize);
+        if (result != null && result.authFailure) {
+            if (!refreshDriveAccessTokenBlocking()) {
+                return result.durationMs;
+            }
+            String refreshed = driveAccessToken;
+            if (refreshed == null || refreshed.trim().isEmpty()) {
+                return result.durationMs;
+            }
+            Log.d(DRIVE_SYNC_TAG, "AUTH_RETRY duration probe 401 -> refreshed token and retrying once");
+            return TrackDurationProbe.probeDurationMs(url, "Bearer " + refreshed.trim(), fileName, fileSize);
+        }
+        return result != null ? result.durationMs : 0L;
     }
 
     /**
@@ -1382,7 +1708,29 @@ public class DriveRepository {
                                                                   long fileSize, String accessToken) {
         if (fileId == null || fileId.trim().isEmpty()) return null;
         String url = "https://www.googleapis.com/drive/v3/files/" + fileId.trim() + "?alt=media";
-        return TrackDurationProbe.probeMetadata(url, "Bearer " + accessToken, fileName, fileSize);
+
+        String token = accessToken;
+        if (token == null || token.trim().isEmpty()) {
+            token = driveAccessToken;
+        }
+        if (token == null || token.trim().isEmpty()) {
+            return null;
+        }
+
+        TrackDurationProbe.AudioMetadata meta =
+                TrackDurationProbe.probeMetadata(url, "Bearer " + token.trim(), fileName, fileSize);
+        if (meta != null && meta.authFailure) {
+            if (!refreshDriveAccessTokenBlocking()) {
+                return meta;
+            }
+            String refreshed = driveAccessToken;
+            if (refreshed == null || refreshed.trim().isEmpty()) {
+                return meta;
+            }
+            Log.d(DRIVE_SYNC_TAG, "AUTH_RETRY media probe 401 -> refreshed token and retrying once");
+            meta = TrackDurationProbe.probeMetadata(url, "Bearer " + refreshed.trim(), fileName, fileSize);
+        }
+        return meta;
     }
 
     /**
@@ -2390,6 +2738,7 @@ public class DriveRepository {
                     setDriveAccessToken(refreshedToken.trim());
                     setDriveService(buildDriveService(refreshedToken.trim()));
                     Log.d(TAG, "Drive session refreshed silently");
+                    resumePendingDriveEnrichmentIfNeeded();
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Silent Drive session refresh failed", e);
