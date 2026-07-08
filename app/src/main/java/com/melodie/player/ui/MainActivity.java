@@ -88,7 +88,7 @@ public class MainActivity extends AppCompatActivity {
                 int globalPct = Math.min(100, 80 + durationPct);
                 syncProgress.setProgress(globalPct);
                 String detail = state.total > 0
-                        ? String.format(Locale.getDefault(), "Progression globale: %d%% • Durées %d/%d", globalPct, state.current, state.total)
+                        ? String.format(Locale.getDefault(), "Progression globale: %d%% • Métadonnées %d/%d", globalPct, state.current, state.total)
                         : String.format(Locale.getDefault(), "Progression globale: %d%%", globalPct);
                 syncDetail.setText(detail);
                 return;

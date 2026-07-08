@@ -17,8 +17,14 @@ public interface DriveFolderDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     void insert(DriveFolder folder);
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    void insertAll(List<DriveFolder> folders);
+
     @Update
     void update(DriveFolder folder);
+
+    @Update
+    void updateAll(List<DriveFolder> folders);
 
     @Query("SELECT * FROM drive_folders ORDER BY name COLLATE NOCASE ASC")
     LiveData<List<DriveFolder>> observeAll();

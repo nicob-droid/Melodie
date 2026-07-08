@@ -72,6 +72,16 @@ public interface SongDao {
     @Query("SELECT * FROM songs WHERE source = 'DRIVE' AND duration <= 0 ORDER BY dateAdded DESC LIMIT :limit")
     List<Song> getDriveSongsWithUnknownDurationSync(int limit);
 
+    /**
+     * Chansons Drive nécessitant un enrichissement : durée inconnue OU artiste encore sur la
+     * valeur de repli (aucune vraie balise appliquée). Permet à un re-bootstrap (qui réutilise
+     * les durées déjà calculées) de tout de même relire les balises des morceaux non taggés,
+     * au lieu de les laisser bloqués sur « Artiste inconnu ».
+     */
+    @Query("SELECT * FROM songs WHERE source = 'DRIVE' AND (duration <= 0 OR artist = :unknownArtist) "
+            + "ORDER BY dateAdded DESC LIMIT :limit")
+    List<Song> getDriveSongsNeedingEnrichmentSync(String unknownArtist, int limit);
+
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
             + "WHERE songs.favorite = 1 AND " + VISIBLE_SONGS_FILTER + " "
