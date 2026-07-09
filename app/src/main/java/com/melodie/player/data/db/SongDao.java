@@ -41,6 +41,9 @@ public interface SongDao {
     @Query("SELECT * FROM songs WHERE id = :id LIMIT 1")
     Song getById(String id);
 
+    @Query("SELECT * FROM songs WHERE id IN (:ids)")
+    List<Song> getByIdsSync(List<String> ids);
+
     // Colonnes completes d'une Song en utilisant TOUJOURS la pochette de l'album (table albums)
     // comme source de verite, afin d'etre parfaitement synchronise avec les onglets Albums/Artists.
     // Fallback sur songs.cover uniquement si la chanson n'a pas de ligne album correspondante.
@@ -140,4 +143,7 @@ public interface SongDao {
 
     @Query("SELECT * FROM songs WHERE albumId = :albumId AND source = 'DRIVE'")
     List<Song> getDriveSongsByAlbumIdSync(long albumId);
+
+    @Query("SELECT * FROM songs WHERE albumId IN (:albumIds)")
+    List<Song> getByAlbumIdsSync(List<Long> albumIds);
 }

@@ -81,11 +81,13 @@ public class MainActivity extends AppCompatActivity {
             syncProgress.setIndeterminate(false);
             syncProgress.setMax(100);
 
-            if ("duration".equals(state.phase)) {
+            if ("duration".equals(state.phase) || "duration_fast".equals(state.phase) || "tags".equals(state.phase)) {
+                int phaseWeight = "tags".equals(state.phase) ? 30 : 20;
+                int base = "tags".equals(state.phase) ? 70 : 80;
                 int durationPct = state.total > 0
-                        ? Math.min(20, (state.current * 20) / Math.max(state.total, 1))
+                        ? Math.min(phaseWeight, (state.current * phaseWeight) / Math.max(state.total, 1))
                         : 0;
-                int globalPct = Math.min(100, 80 + durationPct);
+                int globalPct = Math.min(100, base + durationPct);
                 syncProgress.setProgress(globalPct);
                 String detail = state.total > 0
                         ? String.format(Locale.getDefault(), "Progression globale: %d%% • Métadonnées %d/%d", globalPct, state.current, state.total)
