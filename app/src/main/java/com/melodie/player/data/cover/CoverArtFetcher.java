@@ -101,13 +101,27 @@ public class CoverArtFetcher {
     }
 
     private String fetchFromDeezer(String artist, String album) {
-        String query = buildDeezerQuery(artist, album);
+        // Normalise d'abord : "(Japan Edition + Bonus Tracks)" etc. brouillent la recherche Deezer.
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        String result = fetchFromDeezerInternal(artist, normalizedAlbum, artist, album);
+        if (result != null) return result;
+
+        // Si le titre normalisé diffère, retente avec l'original (édition spéciale référencée telle quelle).
+        if (!normalize(normalizedAlbum).equals(normalize(album))) {
+            result = fetchFromDeezerInternal(artist, album, artist, album);
+        }
+        return result;
+    }
+
+    private String fetchFromDeezerInternal(String queryArtist, String queryAlbum,
+                                           String scoreArtist, String scoreAlbum) {
+        String query = buildDeezerQuery(queryArtist, queryAlbum);
         if (query.isEmpty()) return null;
 
         String endpoint = "https://api.deezer.com/search/album?q=" + Uri.encode(query);
         try (InputStream input = openJsonStream(endpoint);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            return parseBestArtworkFromDeezer(reader, artist, album);
+            return parseBestArtworkFromDeezer(reader, scoreArtist, scoreAlbum);
         } catch (Exception e) {
             Log.d(TAG, "Deezer cover lookup failed for " + query, e);
             return null;
@@ -179,9 +193,12 @@ public class CoverArtFetcher {
         if (artist.isEmpty()) return null;
         String endpoint = "https://itunes.apple.com/search?media=music&entity=album&attribute=artistTerm&limit=100&term="
                 + Uri.encode(artist);
+        // Utilise l'album normalisé pour le scoring : "(Japan Edition + Bonus Tracks)" etc. gêne
+        // la comparaison avec les titres canoniques retournés par iTunes.
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
         try (InputStream input = openJsonStream(endpoint);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            return parseBestArtworkFromItunes(reader, artist, album, 60);
+            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 100);
         } catch (Exception e) {
             Log.d(TAG, "iTunes artist cover lookup failed for " + artist, e);
             return null;
@@ -189,13 +206,15 @@ public class CoverArtFetcher {
     }
 
     private String fetchFromItunesGeneric(String artist, String album) {
-        String term = buildSearchTerm(artist, album);
+        // Normalise le titre d'album pour éviter les requêtes trop verbeuses (Japan Edition, etc.)
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        String term = buildSearchTerm(artist, normalizedAlbum);
         if (term.isEmpty()) return null;
 
         String endpoint = "https://itunes.apple.com/search?media=music&entity=album&limit=50&term=" + Uri.encode(term);
         try (InputStream input = openJsonStream(endpoint);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            return parseBestArtworkFromItunes(reader, artist, album, 95);
+            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 95);
         } catch (Exception e) {
             Log.d(TAG, "iTunes generic cover lookup failed for " + term, e);
             return null;
