@@ -286,10 +286,9 @@ public class DriveRepository {
                     folder.name);
         }
 
-        // Garantit un état album cohérent même si aucun dossier n'a produit de piste.
-        if (tracksSynced == 0) {
-            musicRepository.rebuildAlbumsFromSongs();
-        }
+        // Rebuild complet après bootstrap: supprime les albums/artistes devenus orphelins
+        // quand la sélection Drive a évolué (évite les albums visibles mais vides).
+        musicRepository.rebuildAlbumsFromSongs();
 
         String newStartPageToken = fetchDriveStartPageToken();
         if (newStartPageToken != null && !newStartPageToken.trim().isEmpty()) {
@@ -750,19 +749,6 @@ public class DriveRepository {
                 Log.d(TAG, "Starting to list Drive folders...");
                 isLoading.postValue(true);
 
-                // Conserve les sélections visibles déjà présentes avant de rafraîchir complètement la table.
-                Set<String> previouslySelectedDriveIds = new HashSet<>();
-                List<DriveFolder> previouslySelectedFolders = driveFolderDao.getSelected();
-                if (previouslySelectedFolders != null) {
-                    for (DriveFolder selectedFolder : previouslySelectedFolders) {
-                        if (selectedFolder == null) continue;
-                        String selectedId = selectedFolder.driveId.trim();
-                        if (!selectedId.isEmpty()) {
-                            previouslySelectedDriveIds.add(selectedId);
-                        }
-                    }
-                }
-
                 // Ensemble de TOUS les dossiers déjà connus (avant re-listing). Sert à distinguer
                 // les dossiers réellement NOUVEAUX (à auto-sélectionner sous une source) des
                 // dossiers que l'utilisateur a explicitement DÉCOCHÉS (à ne pas re-cocher).
@@ -775,6 +761,11 @@ public class DriveRepository {
                         if (!knownId.isEmpty()) previouslyKnownDriveIds.add(knownId);
                     }
                 }
+
+                // Conserve uniquement les sélections cohérentes avec les sources Drive persistées.
+                // Évite les cases cochées fantômes quand une source a été supprimée depuis "Sources utilisées".
+                Set<String> previouslySelectedDriveIds =
+                        buildSelectedDriveIdsLinkedToPersistedSources(previouslyKnownFolders);
 
                 // ── Découverte PARALLÈLE des 3 sources ───────────────────────────────────
                 // Mon Drive, Lecteurs partagés et « Partagé avec moi » sont indépendants :
@@ -1184,6 +1175,12 @@ public class DriveRepository {
                     Log.w(TAG, "Drive service is null, skipping selected folders sync");
                     return;
                 }
+
+                // Filet de sécurité UX: si des sources Drive existent déjà dans
+                // "Sources utilisées", on resélectionne leurs dossiers connus avant sync.
+                // Cela évite de perdre des albums/artistes lors de l'ajout de nouvelles sources.
+                ensurePersistedDriveSourceFoldersSelectedForSync();
+
                 List<DriveFolder> selectedFolders = driveFolderDao.getSelected();
                 if (selectedFolders == null) {
                     selectedFolders = new ArrayList<>();
@@ -2799,8 +2796,6 @@ public class DriveRepository {
             }
         }
 
-        pruneObsoleteDriveFolderSources(rootDriveIds);
-
         for (String rootDriveId : rootDriveIds) {
             DriveFolder rootFolder = selectedById.get(rootDriveId);
             if (rootFolder == null) continue;
@@ -2918,20 +2913,87 @@ public class DriveRepository {
         return rootDriveId;
     }
 
-    private void pruneObsoleteDriveFolderSources(Set<String> rootDriveIds) {
-        List<FolderSource> existingSources = folderSourceDao.getAllSync();
-        if (existingSources == null || existingSources.isEmpty()) return;
+    private Set<String> buildSelectedDriveIdsLinkedToPersistedSources(List<DriveFolder> knownFolders) {
+        Set<String> selectedDriveIds = new HashSet<>();
+        if (knownFolders == null || knownFolders.isEmpty()) return selectedDriveIds;
 
-        for (FolderSource source : existingSources) {
-            if (source == null) continue;
-            if (!source.treeUri.startsWith(DRIVE_SOURCE_PREFIX)) continue;
+        Set<String> persistedRootDriveIds = getPersistedDriveSourceRootIds();
+        if (persistedRootDriveIds.isEmpty()) return selectedDriveIds;
 
-            String driveId = source.treeUri.substring(DRIVE_SOURCE_PREFIX.length()).trim();
+        Map<String, DriveFolder> byId = new HashMap<>();
+        for (DriveFolder folder : knownFolders) {
+            if (folder == null || folder.driveId == null) continue;
+            String driveId = folder.driveId.trim();
             if (driveId.isEmpty()) continue;
+            byId.put(driveId, folder);
+        }
 
-            if (!rootDriveIds.contains(driveId)) {
-                folderSourceDao.deleteById(source.id);
+        for (DriveFolder folder : knownFolders) {
+            if (folder == null || !folder.selected || folder.driveId == null) continue;
+            String driveId = folder.driveId.trim();
+            if (driveId.isEmpty()) continue;
+            if (isUnderPersistedRoot(folder, byId, persistedRootDriveIds)) {
+                selectedDriveIds.add(driveId);
             }
+        }
+
+        // Garantit que les racines persistées restent cochées lorsqu'elles sont visibles.
+        for (String rootDriveId : persistedRootDriveIds) {
+            if (byId.containsKey(rootDriveId)) {
+                selectedDriveIds.add(rootDriveId);
+            }
+        }
+
+        return selectedDriveIds;
+    }
+
+    private Set<String> getPersistedDriveSourceRootIds() {
+        Set<String> rootDriveIds = new HashSet<>();
+        List<FolderSource> sources = folderSourceDao.getAllSync();
+        if (sources == null || sources.isEmpty()) return rootDriveIds;
+
+        for (FolderSource source : sources) {
+            if (source == null || source.treeUri == null) continue;
+            if (!source.treeUri.startsWith(DRIVE_SOURCE_PREFIX)) continue;
+            String driveId = source.treeUri.substring(DRIVE_SOURCE_PREFIX.length()).trim();
+            if (!driveId.isEmpty()) {
+                rootDriveIds.add(driveId);
+            }
+        }
+
+        return rootDriveIds;
+    }
+
+    private void ensurePersistedDriveSourceFoldersSelectedForSync() {
+        List<DriveFolder> all = driveFolderDao.getAllSync();
+        if (all == null || all.isEmpty()) return;
+
+        Set<String> persistedRootDriveIds = getPersistedDriveSourceRootIds();
+        if (persistedRootDriveIds.isEmpty()) return;
+
+        Map<String, DriveFolder> byId = new HashMap<>();
+        for (DriveFolder folder : all) {
+            if (folder == null || folder.driveId == null) continue;
+            String driveId = folder.driveId.trim();
+            if (!driveId.isEmpty()) {
+                byId.put(driveId, folder);
+            }
+        }
+
+        List<DriveFolder> toUpdate = new ArrayList<>();
+        for (DriveFolder folder : all) {
+            if (folder == null) continue;
+            if (!isUnderPersistedRoot(folder, byId, persistedRootDriveIds)) continue;
+            if (!folder.selected) {
+                folder.selected = true;
+                toUpdate.add(folder);
+            }
+        }
+
+        if (!toUpdate.isEmpty()) {
+            driveFolderDao.updateAll(toUpdate);
+            Log.d(TAG, "Re-selected " + toUpdate.size()
+                    + " Drive folder(s) linked to persisted sources before sync");
         }
     }
 
