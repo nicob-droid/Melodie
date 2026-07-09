@@ -2015,12 +2015,13 @@ public class DriveRepository {
 
     /**
      * Applique les balises embarquées à une chanson Drive. On enrichit le TITRE, le NUMÉRO
-     * DE PISTE, l'ANNÉE et l'ARTISTE, mais on NE modifie NI le nom d'album NI l'albumId :
-     * le regroupement reste « un dossier = un album » (défini dans {@link #buildDriveSong}).
-     * Cela évite deux défauts observés avec des bibliothèques mal taggées :
-     *   • un titre de morceau affiché comme nom d'album (balise album absente/erronée) ;
-     *   • un même dossier éclaté en plusieurs albums (balise artiste variable d'un morceau
-     *     à l'autre).
+     * DE PISTE, l'ANNÉE et l'ARTISTE. Le regroupement reste « un dossier = un album »
+     * (défini dans {@link #buildDriveSong}) : on ne touche jamais à l'albumId.
+     *
+     * Le nom d'album n'est ajusté que dans un cas précis de nettoyage UI :
+     *   • "Artiste - Album" devient "Album" uniquement si le préfixe matche
+     *     l'artiste réellement taggé (albumArtist/artist).
+     *
      * Retourne true si au moins un champ a été modifié.
      */
     private boolean applyTagsToSong(Song s, TrackDurationProbe.AudioMetadata meta) {
@@ -2047,6 +2048,13 @@ public class DriveRepository {
         if (isNonEmpty(artist)) {
             s.artist = artist;
             changed = true;
+
+            // Retire "Artiste - " uniquement si le préfixe correspond à l'artiste taggé.
+            String normalizedAlbum = normalizeAlbumLabel(s.album, artist);
+            if (isNonEmpty(normalizedAlbum) && !normalizedAlbum.equals(s.album)) {
+                s.album = normalizedAlbum;
+                changed = true;
+            }
         }
 
         return changed;
@@ -2202,14 +2210,15 @@ public class DriveRepository {
         //   • titre/track = derives du nom de fichier ;
         //   • album       = nom de dossier ;
         //   • artiste     = tags locaux de contexte (dossier/fichier) si fiable, sinon "Artiste inconnu".
-        // Les metadonnees embarquees (ID3/Vorbis/iTunes) remplacent ensuite ces valeurs via applyTagsToSong().
+        // Les metadonnees embarquées (ID3/Vorbis/iTunes) remplacent ensuite ces valeurs via applyTagsToSong().
         String title = inferred != null && isNonEmpty(inferred.title)
                 ? inferred.title.trim()
                 : stripLeadingTrackNumber(baseName);
         if (title == null || title.trim().isEmpty()) title = baseName;
         if (title == null || title.trim().isEmpty()) title = "Unknown";
 
-        String album = normalizeAlbumLabel(folderName);
+        String inferredArtist = inferred != null ? inferred.artist : null;
+        String album = normalizeAlbumLabel(folderName, inferredArtist);
         if (album == null || album.trim().isEmpty()) {
             album = source != null && !source.displayName.trim().isEmpty()
                     ? source.displayName.trim() : "Unknown";
@@ -2218,7 +2227,6 @@ public class DriveRepository {
         int inferredTrack = inferred != null ? inferred.trackNumber : 0;
         int trackNumber = audio.trackNumber > 0 ? audio.trackNumber
                 : (inferredTrack > 0 ? inferredTrack : extractLeadingTrackNumber(baseName));
-        String inferredArtist = inferred != null ? inferred.artist : null;
 
         Song song = new Song();
         song.id = "D_" + audio.fileId;
@@ -2263,7 +2271,6 @@ public class DriveRepository {
         if (dashIndex > 0 && dashIndex < normalizedBase.length() - 3) {
             String left = normalizedBase.substring(0, dashIndex).trim();
             String right = normalizedBase.substring(dashIndex + 3).trim();
-
             if (!hasFolderArtist && isLikelyArtist(left)) {
                 // Filename explicitly names an artist and folder doesn't know one: trust filename.
                 artist = left;
@@ -2389,9 +2396,27 @@ public class DriveRepository {
     }
 
     private String normalizeAlbumLabel(String value) {
+        return normalizeAlbumLabel(value, null);
+    }
+
+    private String normalizeAlbumLabel(String value, String artistForPrefixMatch) {
         if (value == null) return null;
         String v = value.trim();
         if (v.isEmpty()) return null;
+
+        // Nettoyage en deux passes: d'abord sur le libellé brut, puis après retrait éventuel du préfixe artiste.
+        v = stripYearNoise(v);
+        v = stripArtistPrefixWhenMatching(v, artistForPrefixMatch);
+        v = stripYearNoise(v);
+        v = v.trim();
+
+        return v.isEmpty() ? null : v;
+    }
+
+    static String stripYearNoise(String albumLabel) {
+        if (albumLabel == null) return null;
+        String v = albumLabel.trim();
+        if (v.isEmpty()) return v;
 
         // Remove common year prefixes: [2004] Album, (2004) Album, 2004 - Album
         v = v.replaceFirst("^\\[(19|20)\\d{2}\\]\\s*", "");
@@ -2401,9 +2426,27 @@ public class DriveRepository {
         v = v.replaceFirst("\\s*\\((19|20)\\d{2}\\)\\s*$", "");
         v = v.replaceFirst("\\s*\\[(19|20)\\d{2}\\]\\s*$", "");
         v = v.replaceFirst("\\s*-\\s*(19|20)\\d{2}\\s*$", "");
-        v = v.trim();
+        return v.trim();
+    }
 
-        return v.isEmpty() ? null : v;
+    static String stripArtistPrefixWhenMatching(String albumLabel, String artistForPrefixMatch) {
+        if (albumLabel == null) return null;
+        if (artistForPrefixMatch == null || artistForPrefixMatch.trim().isEmpty()) return albumLabel;
+
+        String normalizedAlbum = albumLabel.trim();
+        String expectedArtist = artistForPrefixMatch.trim();
+        if (normalizedAlbum.length() <= expectedArtist.length()) return albumLabel;
+
+        if (!normalizedAlbum.regionMatches(true, 0, expectedArtist, 0, expectedArtist.length())) {
+            return albumLabel;
+        }
+
+        String remainder = normalizedAlbum.substring(expectedArtist.length());
+        Matcher separatorMatcher = Pattern.compile("^\\s*[-\\u2013\\u2014]\\s*(.+)$").matcher(remainder);
+        if (!separatorMatcher.find()) return albumLabel;
+
+        String right = separatorMatcher.group(1).trim();
+        return right.isEmpty() ? albumLabel : right;
     }
 
     private String stripLeadingTrackNumber(String value) {
