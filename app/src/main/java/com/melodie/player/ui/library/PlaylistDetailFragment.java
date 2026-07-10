@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -89,17 +90,7 @@ public class PlaylistDetailFragment extends Fragment {
             NavHostFragment.findNavController(this).navigate(R.id.playerFragment);
         });
 
-        view.findViewById(R.id.btn_rename).setOnClickListener(v -> {
-            Playlist playlist = (Playlist) title.getTag();
-            if (playlist == null) return;
-            showRenameDialog(playlist);
-        });
-
-        view.findViewById(R.id.btn_delete).setOnClickListener(v -> {
-            Playlist playlist = (Playlist) title.getTag();
-            if (playlist == null) return;
-            showDeleteDialog(playlist);
-        });
+        view.findViewById(R.id.btn_menu).setOnClickListener(v -> showPlaylistMenu(title, v));
 
         ItemTouchHelper touchHelper = new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(
                 ItemTouchHelper.UP | ItemTouchHelper.DOWN, 0
@@ -158,6 +149,25 @@ public class PlaylistDetailFragment extends Fragment {
             subtitle.setText(getResources().getQuantityString(R.plurals.playlist_song_count, count, count));
             emptyText.setVisibility(count == 0 ? View.VISIBLE : View.GONE);
         });
+    }
+
+    private void showPlaylistMenu(TextView titleView, View anchor) {
+        Playlist playlist = (Playlist) titleView.getTag();
+        if (playlist == null) return;
+
+        PopupMenu popup = new PopupMenu(requireContext(), anchor);
+        popup.inflate(R.menu.menu_playlist_options);
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_rename) {
+                showRenameDialog(playlist);
+                return true;
+            } else if (item.getItemId() == R.id.action_delete) {
+                showDeleteDialog(playlist);
+                return true;
+            }
+            return false;
+        });
+        popup.show();
     }
 
     private void showTrackMenu(Song song) {
