@@ -134,12 +134,6 @@ public class MainActivity extends AppCompatActivity {
         } else {
             musicRepository.ensureLocalIndexed(null);
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                toAsk.add(Manifest.permission.POST_NOTIFICATIONS);
-            }
-        }
         if (!toAsk.isEmpty()) {
             permissionLauncher.launch(toAsk.toArray(new String[0]));
         }
