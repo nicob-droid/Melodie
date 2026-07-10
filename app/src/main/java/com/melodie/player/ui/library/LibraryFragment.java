@@ -24,8 +24,8 @@ public class LibraryFragment extends Fragment {
     private static final int[] TABS = {
             R.string.tab_albums,
             R.string.tab_artists,
-            R.string.nav_search,
             R.string.tab_favorites,
+            R.string.nav_search,
             R.string.tab_settings
     };
 
@@ -52,8 +52,8 @@ public class LibraryFragment extends Fragment {
                 return switch (position) {
                     case 0 -> new AlbumsFragment();
                     case 1 -> new ArtistsFragment();
-                    case 2 -> new SearchFragment();
-                    case 3 -> new PlaylistsFragment();
+                    case 2 -> new PlaylistsFragment();
+                    case 3 -> new SearchFragment();
                     case 4 -> new LibrarySettingsFragment();
                     default -> new AlbumsFragment();
                 };
