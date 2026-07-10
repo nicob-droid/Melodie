@@ -47,6 +47,7 @@ public class ArtistSongsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         view.findViewById(R.id.btn_back).setOnClickListener(v ->
                 NavHostFragment.findNavController(ArtistSongsFragment.this).navigateUp());
+        view.findViewById(R.id.btn_menu).setVisibility(View.GONE);
 
         String artistName = requireArguments().getString(ARG_ARTIST_NAME, "");
         if (artistName == null || artistName.trim().isEmpty()) {

@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -57,10 +58,23 @@ public class AlbumSongsFragment extends Fragment {
 
         TextView title = view.findViewById(R.id.title);
         title.setText(getString(R.string.library_album_tracks_title, albumName));
+        View menuButton = view.findViewById(R.id.btn_menu);
+        menuButton.setVisibility(View.VISIBLE);
+        long finalAlbumId = albumId;
+        String finalAlbumName = albumName;
+        menuButton.setOnClickListener(v -> showAlbumMenu(v, finalAlbumId, finalAlbumName));
 
         RecyclerView rv = view.findViewById(R.id.recycler);
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         LibraryViewModel vm = new ViewModelProvider(this).get(LibraryViewModel.class);
+
+        vm.album(albumId).observe(getViewLifecycleOwner(), album -> {
+            if (album == null) return;
+            String displayName = album.name != null && !album.name.trim().isEmpty()
+                    ? album.name
+                    : getString(R.string.unknown_album);
+            title.setText(getString(R.string.library_album_tracks_title, displayName));
+        });
 
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(((SongAdapter) rv.getAdapter()).getCurrentList(), position);
@@ -91,6 +105,22 @@ public class AlbumSongsFragment extends Fragment {
         });
 
         vm.songsByAlbum(albumId).observe(getViewLifecycleOwner(), adapter::submitList);
+    }
+
+    private void showAlbumMenu(View anchor, long albumId, String albumName) {
+        PopupMenu popup = new PopupMenu(requireContext(), anchor);
+        popup.inflate(R.menu.menu_album_options);
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == R.id.action_edit_album_metadata) {
+                Bundle args = new Bundle();
+                args.putLong(AlbumEditFragment.ARG_ALBUM_ID, albumId);
+                args.putString(AlbumEditFragment.ARG_ALBUM_NAME, albumName);
+                NavHostFragment.findNavController(this).navigate(R.id.albumEditFragment, args);
+                return true;
+            }
+            return false;
+        });
+        popup.show();
     }
 
     private List<Song> currentSongs(RecyclerView rv) {

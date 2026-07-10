@@ -45,6 +45,10 @@ public class LibraryViewModel extends ViewModel {
         return repository.observeAllAlbums();
     }
 
+    public LiveData<Album> album(long albumId) {
+        return repository.observeAlbum(albumId);
+    }
+
     public LiveData<List<String>> artists() {
         return repository.observeArtists();
     }
@@ -91,6 +95,10 @@ public class LibraryViewModel extends ViewModel {
 
     public void reorderPlaylist(long playlistId, List<String> orderedSongIds) {
         repository.reorderPlaylist(playlistId, orderedSongIds);
+    }
+
+    public void updateAlbumMetadata(long albumId, String name, String releaseDate, String cover) {
+        repository.updateAlbumMetadata(albumId, name, releaseDate, cover);
     }
 
     public LiveData<List<Song>> songsByAlbum(long albumId) {

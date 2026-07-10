@@ -3,6 +3,7 @@ package com.melodie.player.data.entity;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.room.Entity;
+import androidx.room.ColumnInfo;
 import androidx.room.PrimaryKey;
 
 @Entity(tableName = "albums")
@@ -31,5 +32,13 @@ public class Album {
 
     /** Indique la provenance principale de l'album pour le badge UI. */
     public int sourceType = SOURCE_UNKNOWN;
+
+    /** Vrai si l'utilisateur a manuellement défini la pochette via l'écran d'édition. */
+    @ColumnInfo(defaultValue = "0")
+    public boolean userEditedCover = false;
+
+    /** Vrai si l'utilisateur a manuellement défini l'année via l'écran d'édition. */
+    @ColumnInfo(defaultValue = "0")
+    public boolean userEditedReleaseDate = false;
 }
 

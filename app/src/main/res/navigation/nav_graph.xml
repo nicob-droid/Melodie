@@ -23,6 +23,19 @@
     </fragment>
 
     <fragment
+        android:id="@+id/albumEditFragment"
+        android:name="com.melodie.player.ui.library.AlbumEditFragment"
+        android:label="@string/album_edit_title">
+        <argument
+            android:name="album_id"
+            app:argType="long" />
+        <argument
+            android:name="album_name"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+
+    <fragment
         android:id="@+id/artistSongsFragment"
         android:name="com.melodie.player.ui.library.ArtistSongsFragment"
         android:label="@string/library_artist_tracks_label">

@@ -139,6 +139,10 @@ public class MusicRepository {
         return albumDao.observeAll();
     }
 
+    public LiveData<Album> observeAlbum(long albumId) {
+        return albumDao.observeById(albumId);
+    }
+
     public LiveData<List<Album>> observeRecentAlbums(int limit) {
         return albumDao.observeRecent(limit);
     }
@@ -275,6 +279,28 @@ public class MusicRepository {
     public void reorderPlaylist(long playlistId, List<String> orderedSongIds) {
         if (playlistId <= 0 || orderedSongIds == null || orderedSongIds.isEmpty()) return;
         executor.execute(() -> playlistDao.replaceOrder(playlistId, orderedSongIds));
+    }
+
+    public void updateAlbumMetadata(long albumId, String name, String releaseDate, String cover) {
+        if (albumId <= 0) return;
+        final String normalizedName = name != null ? name.trim() : "";
+        if (normalizedName.isEmpty()) return;
+        final String normalizedReleaseDate = releaseDate != null ? releaseDate.trim() : "";
+        final String normalizedCover = cover != null ? cover.trim() : "";
+        executor.execute(() -> {
+            albumDao.updateMetadata(
+                    albumId,
+                    normalizedName,
+                    normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
+                    normalizedCover.isEmpty() ? null : normalizedCover
+            );
+            songDao.updateAlbumMetadataByAlbumId(
+                    albumId,
+                    normalizedName,
+                    normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
+                    normalizedCover.isEmpty() ? null : normalizedCover
+            );
+        });
     }
 
     public void addFolderSource(String displayName, String treeUri) {
@@ -464,10 +490,19 @@ public class MusicRepository {
             if (rebuilt == null) continue;
             Album saved = savedAlbums.get(albumId);
             if (saved != null) {
-                if (shouldUseSavedCover(rebuilt.cover, saved.cover, rebuilt.artist)) {
+                if (saved.name != null && !saved.name.trim().isEmpty()) {
+                    rebuilt.name = saved.name.trim();
+                }
+                if (saved.userEditedCover && saved.cover != null && !saved.cover.trim().isEmpty()) {
+                    rebuilt.cover = saved.cover.trim();
+                    rebuilt.userEditedCover = true;
+                } else if (shouldUseSavedCover(rebuilt.cover, saved.cover, rebuilt.artist)) {
                     rebuilt.cover = saved.cover != null ? saved.cover.trim() : null;
                 }
-                if ((rebuilt.releaseDate == null || rebuilt.releaseDate.trim().isEmpty())
+                if (saved.userEditedReleaseDate && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
+                    rebuilt.releaseDate = saved.releaseDate.trim();
+                    rebuilt.userEditedReleaseDate = true;
+                } else if ((rebuilt.releaseDate == null || rebuilt.releaseDate.trim().isEmpty())
                         && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
                     rebuilt.releaseDate = saved.releaseDate;
                 }
@@ -537,6 +572,8 @@ public class MusicRepository {
                              + " onlineEnabled=" + isOnlineCoverEnabled());
                  }
                  if (!isOnlineCoverEnabled()) return;
+                  // Ne pas écraser une pochette choisie manuellement par l'utilisateur.
+                  if (album.userEditedCover) return;
                   String currentCover = album.cover != null ? album.cover.trim() : "";
                   String currentReleaseDate = album.releaseDate != null ? album.releaseDate.trim() : "";
                   
@@ -601,9 +638,11 @@ public class MusicRepository {
           executor.execute(() -> {
               try {
                   if (!isOnlineCoverEnabled()) return;
-                  for (Album album : albumDao.getAllSync()) {
-                       String currentCover = album.cover != null ? album.cover.trim() : "";
-                       
+                   for (Album album : albumDao.getAllSync()) {
+                        // Ne pas écraser une pochette choisie manuellement par l'utilisateur.
+                        if (album.userEditedCover) continue;
+                        String currentCover = album.cover != null ? album.cover.trim() : "";
+
                        // Si la pochette est déjà une URI locale, ne pas chercher en ligne
                        boolean hasLocalCover = !currentCover.isEmpty() && (currentCover.startsWith("content://") || currentCover.startsWith("file://"));
                        
@@ -752,16 +791,24 @@ public class MusicRepository {
              if (saved == null && !savedAlbumsBySignature.isEmpty()) {
                  saved = savedAlbumsBySignature.get(albumSignature(album.artist, album.name));
              }
-             if (saved != null) {
-                  if (shouldUseSavedCover(album.cover, saved.cover, album.artist)) {
-                     album.cover = saved.cover != null ? saved.cover.trim() : null;
-                 }
-                 // Préserver la date de sortie de l'album sauvegardé
-                 if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
-                         && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
-                     album.releaseDate = saved.releaseDate;
-                 }
-             }
+            if (saved != null) {
+                 if (saved.name != null && !saved.name.trim().isEmpty()) {
+                    album.name = saved.name.trim();
+                }
+                if (saved.userEditedCover && saved.cover != null && !saved.cover.trim().isEmpty()) {
+                    album.cover = saved.cover.trim();
+                    album.userEditedCover = true;
+                } else if (shouldUseSavedCover(album.cover, saved.cover, album.artist)) {
+                    album.cover = saved.cover != null ? saved.cover.trim() : null;
+                }
+                if (saved.userEditedReleaseDate && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
+                    album.releaseDate = saved.releaseDate.trim();
+                    album.userEditedReleaseDate = true;
+                } else if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
+                        && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
+                    album.releaseDate = saved.releaseDate;
+                }
+            }
          }
 
          List<Album> rebuiltAlbums = new ArrayList<>(albumMap.values());

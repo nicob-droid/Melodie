@@ -3,6 +3,8 @@ package com.melodie.player.di;
 import android.content.Context;
 
 import androidx.room.Room;
+import androidx.room.migration.Migration;
+import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import com.melodie.player.data.db.AlbumDao;
 import com.melodie.player.data.db.FolderSourceDao;
@@ -30,8 +32,16 @@ public class DatabaseModule {
     @Provides
     @Singleton
     public MelodieDatabase provideDatabase(@ApplicationContext Context ctx) {
+        Migration MIGRATION_13_14 = new Migration(13, 14) {
+            @Override
+            public void migrate(@androidx.annotation.NonNull SupportSQLiteDatabase db) {
+                db.execSQL("ALTER TABLE albums ADD COLUMN userEditedCover INTEGER NOT NULL DEFAULT 0");
+                db.execSQL("ALTER TABLE albums ADD COLUMN userEditedReleaseDate INTEGER NOT NULL DEFAULT 0");
+            }
+        };
         return Room.databaseBuilder(ctx, MelodieDatabase.class, "melodie.db")
                 .fallbackToDestructiveMigration()
+                .addMigrations(MIGRATION_13_14)
                 .build();
     }
 

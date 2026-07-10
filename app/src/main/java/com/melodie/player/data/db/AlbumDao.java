@@ -25,6 +25,9 @@ public interface AlbumDao {
     @Query("SELECT * FROM albums ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC LIMIT :limit")
     LiveData<List<Album>> observeRecent(int limit);
 
+    @Query("SELECT * FROM albums WHERE id = :albumId LIMIT 1")
+    LiveData<Album> observeById(long albumId);
+
     @Query("UPDATE albums SET cover = :cover WHERE id = :albumId")
     void updateCover(long albumId, String cover);
 
@@ -38,6 +41,12 @@ public interface AlbumDao {
 
     @Query("UPDATE albums SET releaseDate = :releaseDate WHERE id = :albumId")
     void updateReleaseDate(long albumId, String releaseDate);
+
+    @Query("UPDATE albums SET name = :name, releaseDate = :releaseDate, cover = :cover, " +
+           "userEditedCover = CASE WHEN :cover IS NOT NULL THEN 1 ELSE 0 END, " +
+           "userEditedReleaseDate = CASE WHEN :releaseDate IS NOT NULL AND :releaseDate != '' THEN 1 ELSE 0 END " +
+           "WHERE id = :albumId")
+    void updateMetadata(long albumId, String name, String releaseDate, String cover);
 
     @Query("DELETE FROM albums WHERE id IN (:albumIds)")
     void deleteByIds(List<Long> albumIds);

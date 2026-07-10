@@ -120,6 +120,9 @@ public interface SongDao {
     @Query("UPDATE songs SET duration = :durationMs WHERE id = :id")
     void updateDuration(String id, long durationMs);
 
+    @Query("UPDATE songs SET album = :albumName, releaseDate = :releaseDate, cover = :cover WHERE albumId = :albumId")
+    void updateAlbumMetadataByAlbumId(long albumId, String albumName, String releaseDate, String cover);
+
     @Query("SELECT DISTINCT artist FROM songs WHERE artist IS NOT NULL AND " + VISIBLE_SONGS_FILTER + " ORDER BY artist COLLATE NOCASE ASC")
     LiveData<List<String>> observeArtists();
 
