@@ -123,7 +123,7 @@
     <string name="playlist_create_new_short">+ Nouvelle playlist</string>
     <string name="playlist_track_added">Morceau ajouté à la playlist</string>
     <string name="playlist_play">Lire</string>
-    <string name="playlist_shuffle">Lecture aléatoire</string>
+    <string name="playlist_shuffle">Aléatoire</string>
     <string name="playlist_empty_tracks">Cette playlist est vide. Ajoute des morceaux depuis le menu d\'un titre.</string>
     <string name="playlist_remove_track">Retirer de la playlist</string>
     <string name="playlist_rename">Renommer</string>
