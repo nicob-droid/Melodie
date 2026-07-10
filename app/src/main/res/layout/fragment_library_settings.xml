@@ -20,15 +20,6 @@
             style="@style/SettingsItem"
             android:text="@string/settings_folders" />
 
-        <com.google.android.material.switchmaterial.SwitchMaterial
-            android:id="@+id/settings_online_cover"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:layout_marginBottom="8dp"
-            android:padding="12dp"
-            android:text="@string/settings_online_cover"
-            android:textColor="@color/text_primary" />
 
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

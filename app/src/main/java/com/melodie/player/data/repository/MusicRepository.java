@@ -544,13 +544,13 @@ public class MusicRepository {
          });
      }
 
-     public boolean isOnlineCoverEnabled() {
-         return prefs.getBoolean(PREF_ONLINE_COVERS, true);
-     }
+      public boolean isOnlineCoverEnabled() {
+          return true;
+      }
 
-     public void setOnlineCoverEnabled(boolean enabled) {
-         prefs.edit().putBoolean(PREF_ONLINE_COVERS, enabled).apply();
-     }
+      public void setOnlineCoverEnabled(boolean enabled) {
+          // Les pochettes en ligne sont toujours activées
+      }
 
       public void resolveMissingCoversNow(Runnable onDone) {
           executor.execute(() -> {

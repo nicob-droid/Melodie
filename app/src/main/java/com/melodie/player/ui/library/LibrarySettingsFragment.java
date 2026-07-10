@@ -12,8 +12,6 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.fragment.NavHostFragment;
 
-import com.google.android.material.switchmaterial.SwitchMaterial;
-
 import com.melodie.player.R;
 import com.melodie.player.data.repository.MusicRepository;
 
@@ -38,11 +36,6 @@ public class LibrarySettingsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         TextView eq = view.findViewById(R.id.settings_eq);
         TextView folders = view.findViewById(R.id.settings_folders);
-        SwitchMaterial onlineCover = view.findViewById(R.id.settings_online_cover);
-
-        onlineCover.setChecked(musicRepository.isOnlineCoverEnabled());
-        onlineCover.setOnCheckedChangeListener((buttonView, isChecked) ->
-                musicRepository.setOnlineCoverEnabled(isChecked));
 
 
         folders.setOnClickListener(v ->
