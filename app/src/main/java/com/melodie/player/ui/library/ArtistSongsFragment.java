@@ -16,8 +16,13 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.melodie.player.R;
+import com.melodie.player.data.entity.Song;
 import com.melodie.player.playback.PlayerController;
 import com.melodie.player.ui.adapter.SongAdapter;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import javax.inject.Inject;
 
@@ -68,7 +73,28 @@ public class ArtistSongsFragment extends Fragment {
         ));
         rv.setAdapter(adapter);
 
+        view.findViewById(R.id.btn_play).setOnClickListener(v -> {
+            List<Song> songs = currentSongs(rv);
+            if (songs.isEmpty()) return;
+            playerController.playQueue(songs, 0);
+            NavHostFragment.findNavController(ArtistSongsFragment.this).navigate(R.id.playerFragment);
+        });
+
+        view.findViewById(R.id.btn_shuffle).setOnClickListener(v -> {
+            List<Song> songs = currentSongs(rv);
+            if (songs.isEmpty()) return;
+            Collections.shuffle(songs);
+            playerController.playQueue(songs, 0);
+            NavHostFragment.findNavController(ArtistSongsFragment.this).navigate(R.id.playerFragment);
+        });
+
         vm.songsByArtist(artistName).observe(getViewLifecycleOwner(), adapter::submitList);
+    }
+
+    private List<Song> currentSongs(RecyclerView rv) {
+        SongAdapter adapter = (SongAdapter) rv.getAdapter();
+        if (adapter == null) return new ArrayList<>();
+        return new ArrayList<>(adapter.getCurrentList());
     }
 }
 
