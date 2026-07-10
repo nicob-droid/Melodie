@@ -11,6 +11,11 @@ import androidx.lifecycle.Transformations;
 
 import com.melodie.player.data.cover.CoverArtFetcher;
 import com.melodie.player.data.db.AlbumDao;
+import com.melodie.player.data.db.DriveAudioDao;
+import com.melodie.player.data.db.DriveEnrichmentJobDao;
+import com.melodie.player.data.db.DriveFolderDao;
+import com.melodie.player.data.db.DriveSyncSessionDao;
+import com.melodie.player.data.db.DriveSyncStateDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.PlaylistDao;
 import com.melodie.player.data.db.SongDao;
@@ -58,6 +63,11 @@ public class MusicRepository {
     private final AlbumDao albumDao;
     private final PlaylistDao playlistDao;
     private final FolderSourceDao folderSourceDao;
+    private final DriveFolderDao driveFolderDao;
+    private final DriveAudioDao driveAudioDao;
+    private final DriveSyncStateDao driveSyncStateDao;
+    private final DriveSyncSessionDao driveSyncSessionDao;
+    private final DriveEnrichmentJobDao driveEnrichmentJobDao;
     private final CoverArtFetcher coverArtFetcher;
     private final ExecutorService executor;
     private final SharedPreferences prefs;
@@ -68,6 +78,11 @@ public class MusicRepository {
                            AlbumDao albumDao,
                            PlaylistDao playlistDao,
                            FolderSourceDao folderSourceDao,
+                           DriveFolderDao driveFolderDao,
+                           DriveAudioDao driveAudioDao,
+                           DriveSyncStateDao driveSyncStateDao,
+                           DriveSyncSessionDao driveSyncSessionDao,
+                           DriveEnrichmentJobDao driveEnrichmentJobDao,
                            CoverArtFetcher coverArtFetcher,
                            ExecutorService executor) {
         this.context = context;
@@ -75,6 +90,11 @@ public class MusicRepository {
         this.albumDao = albumDao;
         this.playlistDao = playlistDao;
         this.folderSourceDao = folderSourceDao;
+        this.driveFolderDao = driveFolderDao;
+        this.driveAudioDao = driveAudioDao;
+        this.driveSyncStateDao = driveSyncStateDao;
+        this.driveSyncSessionDao = driveSyncSessionDao;
+        this.driveEnrichmentJobDao = driveEnrichmentJobDao;
         this.coverArtFetcher = coverArtFetcher;
         this.executor = executor;
         this.prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -480,6 +500,31 @@ public class MusicRepository {
              }
          });
      }
+
+    public void resetApplication(Runnable onDone) {
+        executor.execute(() -> {
+            try {
+                // Nettoyage complet de l'etat applicatif local.
+                playlistDao.clearAllSongs();
+                playlistDao.clearAllPlaylists();
+                songDao.deleteBySource(Song.SOURCE_LOCAL);
+                songDao.deleteBySource(Song.SOURCE_DRIVE);
+                albumDao.clear();
+                folderSourceDao.deleteAll();
+                driveFolderDao.deleteAll();
+                driveAudioDao.clear();
+                driveSyncStateDao.clear();
+                driveSyncSessionDao.clear();
+                driveEnrichmentJobDao.clear();
+                prefs.edit().clear().apply();
+
+                // Repart avec la source locale par defaut et un scan propre.
+                performFullScan();
+            } finally {
+                if (onDone != null) onDone.run();
+            }
+        });
+    }
 
      public void resolveAlbumCover(Album album, boolean force, Runnable onDone) {
          executor.execute(() -> {

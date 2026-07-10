@@ -20,6 +20,35 @@
             style="@style/SettingsItem"
             android:text="@string/settings_folders" />
 
+        <TextView
+            style="@style/SettingsSectionTitle"
+            android:text="@string/settings_legal_info" />
+
+        <TextView
+            android:id="@+id/settings_legal_terms"
+            style="@style/SettingsItem"
+            android:text="@string/settings_legal_terms" />
+
+        <TextView
+            android:id="@+id/settings_legal_privacy"
+            style="@style/SettingsItem"
+            android:text="@string/settings_legal_privacy" />
+
+        <TextView
+            style="@style/SettingsSectionTitle"
+            android:text="@string/settings_about" />
+
+        <TextView
+            android:id="@+id/settings_app_version"
+            style="@style/SettingsItem"
+            android:clickable="false"
+            android:focusable="false" />
+
+        <TextView
+            android:id="@+id/settings_reset_app"
+            style="@style/SettingsItem"
+            android:text="@string/settings_reset_app" />
+
 
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

@@ -75,6 +75,21 @@
     <string name="settings_cache">Cache</string>
     <string name="settings_theme">Thème</string>
     <string name="settings_equalizer">Égaliseur</string>
+    <string name="settings_legal_info">Informations légales</string>
+    <string name="settings_legal_terms">Conditions d\'utilisation</string>
+    <string name="settings_legal_privacy">Politique de confidentialité</string>
+    <string name="settings_legal_terms_content">En utilisant Melodie, vous acceptez d\'utiliser l\'application dans le respect des lois en vigueur et des droits d\'auteur applicables à vos contenus audio.</string>
+    <string name="settings_legal_privacy_content">Melodie traite principalement les données localement sur votre appareil. Certaines fonctionnalités (comme Google Drive) nécessitent une authentification et des échanges réseau selon les permissions accordées.</string>
+    <string name="settings_about">À propos</string>
+    <string name="settings_about_version_value">Version de l\'application : %1$s</string>
+    <string name="settings_reset_app">Réinitialiser l\'application</string>
+    <string name="settings_reset_app_title">Réinitialiser l\'application ?</string>
+    <string name="settings_reset_app_message">Cette action supprime les données locales (bibliothèque, playlists, sources et cache de synchronisation), puis relance un état propre.</string>
+    <string name="settings_reset_app_confirm_title">Confirmation finale</string>
+    <string name="settings_reset_app_confirm_message">Pour confirmer, tapez RESET ci-dessous.</string>
+    <string name="settings_reset_app_type_reset_hint">Tapez RESET</string>
+    <string name="settings_reset_app_type_reset_error">Confirmation invalide. Tapez exactement RESET.</string>
+    <string name="settings_reset_app_done">Application réinitialisée.</string>
 
     <!-- Drive -->
     <string name="drive_title">Google Drive</string>

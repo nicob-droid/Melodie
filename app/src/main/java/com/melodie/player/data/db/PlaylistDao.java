@@ -58,6 +58,12 @@ public interface PlaylistDao {
     @Query("DELETE FROM playlist_song WHERE playlistId = :playlistId")
     void clearSongs(long playlistId);
 
+    @Query("DELETE FROM playlist_song")
+    void clearAllSongs();
+
+    @Query("DELETE FROM playlists")
+    void clearAllPlaylists();
+
     @Query("UPDATE playlist_song SET position = :position WHERE playlistId = :playlistId AND songId = :songId")
     void updateSongPosition(long playlistId, String songId, int position);
 
