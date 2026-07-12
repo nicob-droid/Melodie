@@ -11,6 +11,14 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// Secrets lus depuis local.properties (non committé) avec repli sur les variables d'environnement.
+// Rien de sensible n'est stocké dans le dépôt.
+val secretProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun secret(name: String): String? = secretProps.getProperty(name) ?: System.getenv(name)
+
 android {
     namespace = "com.melodie.player"
     compileSdk = 36
@@ -27,22 +35,43 @@ android {
 
         // Token Discogs optionnel pour augmenter le quota (60 req/min au lieu de 25).
         // A placer dans local.properties : discogs.token=XXXXXXXXXXXXX
-        val localProps = Properties()
-        val lpFile = rootProject.file("local.properties")
-        if (lpFile.exists()) {
-            lpFile.inputStream().use { stream -> localProps.load(stream) }
-        }
-        val discogsToken = localProps.getProperty("discogs.token", "")
+        val discogsToken = secret("discogs.token") ?: ""
         buildConfigField("String", "DISCOGS_TOKEN", "\"$discogsToken\"")
+    }
+
+    // Signature release : configurée uniquement si RELEASE_STORE_FILE est fourni
+    // (local.properties ou variables d'environnement CI). Sinon, build release non signé.
+    // Clés attendues (local.properties) :
+    //   RELEASE_STORE_FILE=C:/chemin/vers/melodie-release.jks
+    //   RELEASE_STORE_PASSWORD=********
+    //   RELEASE_KEY_ALIAS=melodie
+    //   RELEASE_KEY_PASSWORD=********
+    signingConfigs {
+        create("release") {
+            val storePath = secret("RELEASE_STORE_FILE")
+            if (storePath != null && storePath.isNotBlank()) {
+                storeFile = file(storePath)
+                storePassword = secret("RELEASE_STORE_PASSWORD")
+                keyAlias = secret("RELEASE_KEY_ALIAS")
+                keyPassword = secret("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // N'applique la signature que si un keystore a été fourni.
+            signingConfig = if (!secret("RELEASE_STORE_FILE").isNullOrBlank()) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
     }
     compileOptions {

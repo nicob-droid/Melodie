@@ -57,6 +57,11 @@ public class MainActivity extends AppCompatActivity {
     private AdView bannerAdView;
     private android.widget.FrameLayout adContainer;
     private boolean adLoaded = false;
+    // Relance automatique de la bannière en cas d'échec réseau (backoff exponentiel plafonné).
+    private int adRetryAttempt = 0;
+    private static final int AD_MAX_RETRIES = 5;
+    private final android.os.Handler adRetryHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
 
     // Bloc bannière de PRODUCTION (release). En debug on utilise l'unité de test Google
     // pour toujours voir une annonce et vérifier l'intégration (les nouvelles unités prod
@@ -191,6 +196,7 @@ public class MainActivity extends AppCompatActivity {
             public void onAdLoaded() {
                 // On n'affiche la bannière que si une annonce a bien été chargée,
                 // pour ne pas réserver un espace vide.
+                adRetryAttempt = 0;
                 adLoaded = true;
                 if (adContainer != null) adContainer.setVisibility(View.VISIBLE);
             }
@@ -201,10 +207,26 @@ public class MainActivity extends AppCompatActivity {
                         + " msg=" + error.getMessage());
                 adLoaded = false;
                 if (adContainer != null) adContainer.setVisibility(View.GONE);
+                // Erreur souvent transitoire (réseau au démarrage) : on retente avec backoff.
+                scheduleAdRetry();
             }
         });
-        AdRequest adRequest = new AdRequest.Builder().build();
-        bannerAdView.loadAd(adRequest);
+        requestBannerAd();
+    }
+
+    /** Envoie une requête d'annonce sur la bannière existante. */
+    private void requestBannerAd() {
+        if (bannerAdView == null) return;
+        bannerAdView.loadAd(new AdRequest.Builder().build());
+    }
+
+    /** Reprogramme un chargement de bannière avec un backoff exponentiel plafonné à 30s. */
+    private void scheduleAdRetry() {
+        if (adRetryAttempt >= AD_MAX_RETRIES) return;
+        long delaySeconds = (long) Math.min(30, Math.pow(2, adRetryAttempt));
+        adRetryAttempt++;
+        adRetryHandler.removeCallbacksAndMessages(null);
+        adRetryHandler.postDelayed(this::requestBannerAd, delaySeconds * 1000L);
     }
 
     /**
@@ -241,6 +263,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        adRetryHandler.removeCallbacksAndMessages(null);
         if (bannerAdView != null) {
             bannerAdView.destroy();
             bannerAdView = null;
