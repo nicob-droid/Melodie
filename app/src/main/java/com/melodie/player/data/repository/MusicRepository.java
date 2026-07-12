@@ -351,13 +351,7 @@ public class MusicRepository {
         if (source == null) return;
         executor.execute(() -> {
             source.enabled = !source.enabled;
-            if (isLocalMusicSource(source.treeUri)) {
-                prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
-            }
-            folderSourceDao.update(source);
-            // Un toggle doit uniquement masquer/afficher la source :
-            // on évite le rescan pour ne pas perdre les métadonnées éditées.
-            rebuildAlbumsFromSongs();
+            applySourceEnabledState(source);
         });
     }
 
@@ -365,13 +359,33 @@ public class MusicRepository {
         if (source == null) return;
         executor.execute(() -> {
             source.enabled = enabled;
-            if (isLocalMusicSource(source.treeUri)) {
-                prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
-            }
-            folderSourceDao.update(source);
-            // Même principe qu'au toggle : activer/désactiver ne doit pas détruire la data.
-            rebuildAlbumsFromSongs();
+            applySourceEnabledState(source);
         });
+    }
+
+    /**
+     * Applique un changement d'état enabled/disabled sur une source.
+     * - Désactivation : on masque simplement la source (aucune suppression de données
+     *   ni de métadonnées éditées).
+     * - Activation d'une source locale : on ré-indexe le MediaStore, car les morceaux
+     *   locaux ne sont pas persistés durablement et doivent être repeuplés. Les
+     *   métadonnées d'albums éditées sont préservées par rebuildAlbumsFromSongs.
+     * - Activation d'une source Drive : simple reconstruction des albums visibles.
+     */
+    private void applySourceEnabledState(FolderSource source) {
+        if (isLocalMusicSource(source.treeUri)) {
+            // On ne conserve la suppression du seed par défaut que si la source reste désactivée.
+            prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, !source.enabled).apply();
+        }
+        folderSourceDao.update(source);
+
+        if (source.enabled && shouldRescanLocalLibrary(source)) {
+            // Réactivation d'une source locale : ré-indexation du MediaStore.
+            performFullScan();
+        } else {
+            // Désactivation (toutes sources) ou (ré)activation Drive : on masque/affiche seulement.
+            rebuildAlbumsFromSongs();
+        }
     }
 
     public void removeFolderSource(FolderSource source) {
@@ -389,7 +403,20 @@ public class MusicRepository {
                 songDao.deleteLocalSongsByFolderSourceId(source.id);
                 rebuildAlbumsFromSongs();
             }
+            syncPlaylistsWithSources();
         });
+    }
+
+    private void syncPlaylistsWithSources() {
+        // Nettoie les références de playlists vers des morceaux supprimés.
+        playlistDao.deleteOrphanSongRefs();
+        playlistDao.deleteEmptyPlaylists();
+
+        // Si toutes les sources ont été supprimées, on purge aussi les playlists.
+        if (folderSourceDao.getAllSync().isEmpty()) {
+            playlistDao.clearAllSongs();
+            playlistDao.clearAllPlaylists();
+        }
     }
 
     /**
