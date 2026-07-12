@@ -19,10 +19,22 @@ public interface AlbumDao {
     @Query("DELETE FROM albums")
     void clear();
 
-    @Query("SELECT * FROM albums ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC")
+    @Query("SELECT * FROM albums " +
+           "WHERE EXISTS (" +
+           "  SELECT 1 FROM songs " +
+           "  WHERE songs.albumId = albums.id " +
+           "    AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)" +
+           ") " +
+           "ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC")
     LiveData<List<Album>> observeAll();
 
-    @Query("SELECT * FROM albums ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC LIMIT :limit")
+    @Query("SELECT * FROM albums " +
+           "WHERE EXISTS (" +
+           "  SELECT 1 FROM songs " +
+           "  WHERE songs.albumId = albums.id " +
+           "    AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)" +
+           ") " +
+           "ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC LIMIT :limit")
     LiveData<List<Album>> observeRecent(int limit);
 
     @Query("SELECT * FROM albums WHERE id = :albumId LIMIT 1")
@@ -50,6 +62,9 @@ public interface AlbumDao {
 
     @Query("DELETE FROM albums WHERE id IN (:albumIds)")
     void deleteByIds(List<Long> albumIds);
+
+    @Query("DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT albumId FROM songs)")
+    void deleteOrphans();
 
     @Query("SELECT * FROM albums WHERE id = :albumId LIMIT 1")
     Album getByIdSync(long albumId);

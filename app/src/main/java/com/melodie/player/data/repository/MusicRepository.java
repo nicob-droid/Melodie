@@ -816,7 +816,9 @@ public class MusicRepository {
                  .comparing((Album album) -> album.artist != null ? album.artist : "", String.CASE_INSENSITIVE_ORDER)
                  .thenComparing(album -> album.name != null ? album.name : "", String.CASE_INSENSITIVE_ORDER));
 
-         albumDao.clear();
+         // On conserve les albums des sources désactivées pour préserver les métadonnées éditées.
+         // Seuls les albums sans aucune chanson restante sont purgés (suppression de source, resync, etc.).
+         albumDao.deleteOrphans();
          if (!rebuiltAlbums.isEmpty()) {
              albumDao.insertAll(rebuiltAlbums);
          }
