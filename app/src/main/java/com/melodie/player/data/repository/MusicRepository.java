@@ -355,13 +355,9 @@ public class MusicRepository {
                 prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
             }
             folderSourceDao.update(source);
-            if (shouldRescanLocalLibrary(source)) {
-                // Rescan pour refléter le changement d'état (activation / désactivation).
-                // On supprime aussi les chansons orphelines des sources désactivées.
-                performFullScan();
-            } else {
-                rebuildAlbumsFromSongs();
-            }
+            // Un toggle doit uniquement masquer/afficher la source :
+            // on évite le rescan pour ne pas perdre les métadonnées éditées.
+            rebuildAlbumsFromSongs();
         });
     }
 
@@ -373,12 +369,8 @@ public class MusicRepository {
                 prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
             }
             folderSourceDao.update(source);
-            if (shouldRescanLocalLibrary(source)) {
-                // Rescan pour refléter le changement d'état.
-                performFullScan();
-            } else {
-                rebuildAlbumsFromSongs();
-            }
+            // Même principe qu'au toggle : activer/désactiver ne doit pas détruire la data.
+            rebuildAlbumsFromSongs();
         });
     }
 
