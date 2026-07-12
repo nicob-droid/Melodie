@@ -10,15 +10,24 @@ import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
 import androidx.core.splashscreen.SplashScreen;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.navigation.NavController;
 import androidx.navigation.fragment.NavHostFragment;
 
+import com.google.android.gms.ads.AdListener;
 import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.AdSize;
 import com.google.android.gms.ads.AdView;
+import com.google.android.gms.ads.LoadAdError;
+import com.melodie.player.BuildConfig;
 import com.melodie.player.R;
 import com.melodie.player.data.repository.DriveRepository;
 import com.melodie.player.data.repository.MusicRepository;
@@ -46,12 +55,25 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityResultLauncher<String[]> permissionLauncher;
     private AdView bannerAdView;
+    private android.widget.FrameLayout adContainer;
+    private boolean adLoaded = false;
+
+    // Bloc bannière de PRODUCTION (release). En debug on utilise l'unité de test Google
+    // pour toujours voir une annonce et vérifier l'intégration (les nouvelles unités prod
+    // mettent du temps à diffuser et renvoient souvent "no fill" au début).
+    private static final String BANNER_AD_UNIT_PROD = "ca-app-pub-7013455903622493/5643616017";
+    private static final String BANNER_AD_UNIT_TEST = "ca-app-pub-3940256099942544/6300978111";
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
+        // Edge-to-edge : on dessine sous les barres système et on gère les insets manuellement
+        // pour protéger le header (haut) et la zone du bas (pub / mini-player).
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         setContentView(R.layout.activity_main);
+
+        applyWindowInsets();
 
         NavHostFragment host = (NavHostFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.nav_host);
@@ -59,13 +81,15 @@ public class MainActivity extends AppCompatActivity {
 
         // Hide mini player on player full screen
         View miniPlayer = findViewById(R.id.mini_player_container);
-        bannerAdView = findViewById(R.id.ad_banner);
+        adContainer = findViewById(R.id.ad_container);
         loadBannerAd();
         nav.addOnDestinationChangedListener((c, dest, args) -> {
             boolean onPlayer = dest.getId() == R.id.playerFragment;
             miniPlayer.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
-            if (bannerAdView != null) {
-                bannerAdView.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
+            if (adContainer != null) {
+                // Masquée sur le lecteur plein écran. Ailleurs, visible seulement si une
+                // annonce a réellement été chargée (évite un espace vide).
+                adContainer.setVisibility((!onPlayer && adLoaded) ? View.VISIBLE : View.GONE);
             }
         });
 
@@ -148,10 +172,55 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadBannerAd() {
-        if (bannerAdView == null) return;
+        if (adContainer == null) return;
+        // AdView créée en code : adSize + adUnitId définis avant loadAd, ce qui évite
+        // l'erreur d'inflation "Required XML attribute adSize was missing" (cadre rouge).
+        bannerAdView = new AdView(this);
+        bannerAdView.setAdSize(AdSize.BANNER);
+        // Empêche MIUI/Android de forcer le mode sombre sur le WebView de l'annonce (sinon invisible).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            bannerAdView.setForceDarkAllowed(false);
+        }
+        // En debug: unité de test (toujours remplie). En release: unité de production.
+        String unit = BuildConfig.DEBUG ? BANNER_AD_UNIT_TEST : BANNER_AD_UNIT_PROD;
+        bannerAdView.setAdUnitId(unit);
+        adContainer.removeAllViews();
+        adContainer.addView(bannerAdView);
+        bannerAdView.setAdListener(new AdListener() {
+            @Override
+            public void onAdLoaded() {
+                // On n'affiche la bannière que si une annonce a bien été chargée,
+                // pour ne pas réserver un espace vide.
+                adLoaded = true;
+                if (adContainer != null) adContainer.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onAdFailedToLoad(@NonNull LoadAdError error) {
+                android.util.Log.w("AdMob", "Banner failed to load: code=" + error.getCode()
+                        + " msg=" + error.getMessage());
+                adLoaded = false;
+                if (adContainer != null) adContainer.setVisibility(View.GONE);
+            }
+        });
         AdRequest adRequest = new AdRequest.Builder().build();
         bannerAdView.loadAd(adRequest);
-        bannerAdView.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Applique les insets système sur le conteneur racine : padding haut pour la status bar
+     * (header protégé) et padding bas pour la navigation/gesture bar (pub, bandeau de synchro
+     * et mini-player protégés). Le fond edge-to-edge reste dessiné jusqu'aux bords.
+     */
+    private void applyWindowInsets() {
+        final View root = findViewById(R.id.root_container);
+        if (root == null) return;
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
     }
 
     @Override

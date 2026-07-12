@@ -1,49 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:ads="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:orientation="vertical"
     android:background="@color/bg_dark">
 
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/nav_host"
         android:name="androidx.navigation.fragment.NavHostFragment"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:layout_weight="1"
         app:defaultNavHost="true"
-        app:navGraph="@navigation/nav_graph"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/ad_banner" />
+        app:navGraph="@navigation/nav_graph" />
 
-    <com.google.android.gms.ads.AdView
-        android:id="@+id/ad_banner"
-        android:layout_width="wrap_content"
+    <!-- Conteneur de la bannière AdMob : l'AdView est créée en code (adSize + adUnitId
+         dynamiques) pour éviter l'erreur d'inflation "adSize missing". Masqué tant qu'aucune
+         annonce n'est chargée. -->
+    <FrameLayout
+        android:id="@+id/ad_container"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="4dp"
-        android:visibility="gone"
-        ads:adSize="BANNER"
-        ads:adUnitId="ca-app-pub-7013455903622493/5643616017"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/sync_banner" />
+        android:layout_gravity="center_horizontal"
+        android:visibility="gone" />
 
     <!-- Bandeau de synchronisation Google Drive (masqué par défaut). -->
     <LinearLayout
         android:id="@+id/sync_banner"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@color/surface"
         android:paddingHorizontal="16dp"
         android:paddingVertical="10dp"
-        android:visibility="gone"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/mini_player_container">
+        android:visibility="gone">
 
         <TextView
             android:id="@+id/sync_banner_title"
@@ -77,11 +70,8 @@
     <androidx.fragment.app.FragmentContainerView
         android:id="@+id/mini_player_container"
         android:name="com.melodie.player.ui.player.MiniPlayerFragment"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</LinearLayout>
 
