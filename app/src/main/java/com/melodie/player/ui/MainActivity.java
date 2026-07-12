@@ -17,6 +17,8 @@ import androidx.core.splashscreen.SplashScreen;
 import androidx.navigation.NavController;
 import androidx.navigation.fragment.NavHostFragment;
 
+import com.google.android.gms.ads.AdRequest;
+import com.google.android.gms.ads.AdView;
 import com.melodie.player.R;
 import com.melodie.player.data.repository.DriveRepository;
 import com.melodie.player.data.repository.MusicRepository;
@@ -43,6 +45,7 @@ public class MainActivity extends AppCompatActivity {
     DriveRepository driveRepository;
 
     private ActivityResultLauncher<String[]> permissionLauncher;
+    private AdView bannerAdView;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -56,9 +59,14 @@ public class MainActivity extends AppCompatActivity {
 
         // Hide mini player on player full screen
         View miniPlayer = findViewById(R.id.mini_player_container);
+        bannerAdView = findViewById(R.id.ad_banner);
+        loadBannerAd();
         nav.addOnDestinationChangedListener((c, dest, args) -> {
             boolean onPlayer = dest.getId() == R.id.playerFragment;
             miniPlayer.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
+            if (bannerAdView != null) {
+                bannerAdView.setVisibility(onPlayer ? View.GONE : View.VISIBLE);
+            }
         });
 
         // Bandeau global de synchronisation Drive : visible tant que la synchro tourne,
@@ -139,8 +147,35 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void loadBannerAd() {
+        if (bannerAdView == null) return;
+        AdRequest adRequest = new AdRequest.Builder().build();
+        bannerAdView.loadAd(adRequest);
+        bannerAdView.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    protected void onPause() {
+        if (bannerAdView != null) {
+            bannerAdView.pause();
+        }
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (bannerAdView != null) {
+            bannerAdView.resume();
+        }
+    }
+
     @Override
     protected void onDestroy() {
+        if (bannerAdView != null) {
+            bannerAdView.destroy();
+            bannerAdView = null;
+        }
         super.onDestroy();
         if (isFinishing()) {
             playerController.release();

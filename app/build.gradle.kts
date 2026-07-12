@@ -121,6 +121,7 @@ dependencies {
     implementation(libs.google.api.client.android)
     implementation(libs.google.api.services.drive)
     implementation(libs.documentfile)
+    implementation("com.google.android.gms:play-services-ads:23.3.0")
 
     // Tests
     testImplementation(libs.junit)

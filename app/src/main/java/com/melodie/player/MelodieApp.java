@@ -5,6 +5,8 @@ import android.app.Application;
 import androidx.hilt.work.HiltWorkerFactory;
 import androidx.work.Configuration;
 
+import com.google.android.gms.ads.MobileAds;
+
 import com.melodie.player.data.repository.MusicRepository;
 
 import javax.inject.Inject;
@@ -23,6 +25,7 @@ public class MelodieApp extends Application implements Configuration.Provider {
     @Override
     public void onCreate() {
         super.onCreate();
+        MobileAds.initialize(this);
         // Re-tente UNE fois les pochettes précédemment marquées "introuvables".
         musicRepository.retryMissingCoversOnStartup();
     }

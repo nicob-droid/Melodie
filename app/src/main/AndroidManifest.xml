@@ -26,6 +26,11 @@
         android:theme="@style/Theme.Melodie"
         tools:targetApi="36">
 
+        <!-- AdMob production App ID. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-7013455903622493~1168194707" />
+
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
