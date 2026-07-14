@@ -204,6 +204,8 @@ public class DriveFragment extends Fragment {
                 msg = "Erreur réseau Google Sign-In";
             } else if (code == GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS) {
                 msg = "Connexion déjà en cours";
+            } else if (code == GoogleSignInStatusCodes.SIGN_IN_FAILED) {
+                msg = "Connexion refusée. Vérifie OAuth: application en mode External + compte autorisé (écran de consentement/testeurs).";
             } else if (code == GoogleSignInStatusCodes.DEVELOPER_ERROR) {
                 msg = "Erreur config OAuth (code 10). Vérifie google-services.json, package com.melodie.player et SHA-1 debug/release dans Firebase.";
             } else {

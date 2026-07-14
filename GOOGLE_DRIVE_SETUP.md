@@ -30,6 +30,18 @@ Un fichier **`google-services.json` de test** a été créé pour permettre la c
 3. Nommez-le: `melodie-player`
 4. Sélectionnez: **Authentification** et **Google Sign-In**
 
+### Étape 1 bis: Autoriser n'importe quel compte Google (IMPORTANT)
+
+Dans **Google Cloud Console** (projet lié à Firebase) :
+
+1. Ouvrez **Google Auth Platform / OAuth consent screen**
+2. Vérifiez que le type d'application est **External** (et pas Internal)
+3. Si le statut est **Testing**, ajoutez tous les comptes à autoriser dans **Test users**
+4. Si vous voulez vraiment "n'importe quel compte", passez en **In production** après validation requise
+5. Vérifiez qu'aucune restriction de domaine n'est active (pas de `hd_domain` / hosted domain)
+
+Sinon, la connexion fonctionnera uniquement pour les comptes déjà autorisés (souvent votre Gmail personnel).
+
 ### Étape 2: Configurer Android dans Firebase
 
 1. Dans Firebase, allez à **Paramètres du projet** (⚙️ en haut)
