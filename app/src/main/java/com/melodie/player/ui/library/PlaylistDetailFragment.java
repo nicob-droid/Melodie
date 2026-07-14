@@ -68,10 +68,16 @@ public class PlaylistDetailFragment extends Fragment {
         view.findViewById(R.id.btn_back)
                 .setOnClickListener(v -> NavHostFragment.findNavController(this).navigateUp());
 
+        final ItemTouchHelper[] touchHelperRef = new ItemTouchHelper[1];
         SongAdapter adapter = new SongAdapter((song, position) -> {
             playerController.playQueue(adapterSongs(rv), position);
             NavHostFragment.findNavController(this).navigate(R.id.playerFragment);
-        }, (anchor, song, position) -> showTrackMenu(song));
+        }, (anchor, song, position) -> showTrackMenu(song), true, viewHolder -> {
+            ItemTouchHelper helper = touchHelperRef[0];
+            if (helper != null) {
+                helper.startDrag(viewHolder);
+            }
+        });
         rv.setLayoutManager(new LinearLayoutManager(requireContext()));
         rv.setAdapter(adapter);
 
@@ -117,7 +123,7 @@ public class PlaylistDetailFragment extends Fragment {
 
             @Override
             public boolean isLongPressDragEnabled() {
-                return true;
+                return false;
             }
 
             @Override
@@ -132,6 +138,7 @@ public class PlaylistDetailFragment extends Fragment {
                 vm.reorderPlaylist(playlistId, orderedIds);
             }
         });
+        touchHelperRef[0] = touchHelper;
         touchHelper.attachToRecyclerView(rv);
 
         vm.playlist(playlistId).observe(getViewLifecycleOwner(), playlist -> {

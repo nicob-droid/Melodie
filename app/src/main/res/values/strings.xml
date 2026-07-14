@@ -141,6 +141,7 @@
     <string name="album_source_badge_unknown">Source inconnue</string>
     <string name="artist_song_count">%1$d morceaux</string>
     <string name="song_more_actions">Actions du morceau</string>
+    <string name="song_drag_handle">Déplacer le morceau</string>
 
     <!-- Playlists -->
     <string name="playlists_empty_title">Aucune playlist</string>

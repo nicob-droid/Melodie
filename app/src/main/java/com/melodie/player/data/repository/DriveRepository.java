@@ -71,6 +71,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext;
 public class DriveRepository {
 
     private static final String TAG = "DriveRepository";
+    private static final int VINYL_SIDE_TRACK_BLOCK = 1000;
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
     private static final String DRIVE_SYNC_TAG = "DriveSync";
     private static final String DRIVE_AUDIO_CACHE_DIR = "drive_audio_cache";
@@ -82,7 +83,7 @@ public class DriveRepository {
     // Incrémenter cette valeur force un bootstrap unique pour ré-enrichir la bibliothèque
     // Drive existante (ex: lorsqu'on améliore la lecture des balises embarquées ou la logique
     // de repli par nom de dossier).
-    private static final String METADATA_SCHEMA_VERSION = "4";
+    private static final String METADATA_SCHEMA_VERSION = "5";
     // Artiste par défaut quand aucune balise n'est disponible : on ne devine JAMAIS l'artiste
     // à partir des noms de fichiers/dossiers (source de confusion), on affiche « Artiste inconnu ».
     private static final String UNKNOWN_ARTIST = "Artiste inconnu";
@@ -493,7 +494,10 @@ public class DriveRepository {
         audio.lastSeenSyncGeneration = syncGeneration;
         audio.removed = false;
         audio.durationMs = extractDurationFromDriveMetadata(file);
-        audio.trackNumber = extractTrackNumberFromDriveMetadata(file);
+        audio.trackNumber = resolveTrackSortNumber(
+                stripExtension(audio.fileName),
+                extractTrackNumberFromDriveMetadata(file),
+                0);
         audio.metadataStatus = audio.durationMs > 0L
                 ? DriveAudio.METADATA_STATUS_DURATION_DONE
                 : DriveAudio.METADATA_STATUS_DISCOVERED;
@@ -1548,7 +1552,7 @@ public class DriveRepository {
 
                     boolean changed = false;
                     if (meta != null && meta.hasAnyTag()) {
-                        changed = applyTagsToSong(s, meta);
+                        changed = applyTagsToSong(s, meta, audio);
                     }
                     if (meta != null && s.duration <= 0L && meta.durationMs > 0L) {
                         s.duration = meta.durationMs;
@@ -2021,7 +2025,7 @@ public class DriveRepository {
      *
      * Retourne true si au moins un champ a été modifié.
      */
-    private boolean applyTagsToSong(Song s, TrackDurationProbe.AudioMetadata meta) {
+    private boolean applyTagsToSong(Song s, TrackDurationProbe.AudioMetadata meta, DriveAudio audio) {
         if (s == null || meta == null) return false;
         boolean changed = false;
 
@@ -2029,8 +2033,10 @@ public class DriveRepository {
             s.title = meta.title.trim();
             changed = true;
         }
-        if (meta.trackNumber > 0) {
-            s.trackNumber = meta.trackNumber;
+        String baseName = audio != null ? stripExtension(audio.fileName) : s.title;
+        int resolvedTrackNumber = resolveTrackSortNumber(baseName, meta.trackNumber, s.trackNumber);
+        if (resolvedTrackNumber > 0 && s.trackNumber != resolvedTrackNumber) {
+            s.trackNumber = resolvedTrackNumber;
             changed = true;
         }
         if (isNonEmpty(meta.year)) {
@@ -2173,7 +2179,10 @@ public class DriveRepository {
                 audio.lastSeenSyncGeneration = syncGeneration;
                 audio.removed = false;
                 audio.durationMs = extractDurationFromDriveMetadata(file);
-                audio.trackNumber = extractTrackNumberFromDriveMetadata(file);
+                audio.trackNumber = resolveTrackSortNumber(
+                        stripExtension(audio.fileName),
+                        extractTrackNumberFromDriveMetadata(file),
+                        0);
                 audio.metadataStatus = audio.durationMs > 0L
                         ? DriveAudio.METADATA_STATUS_DURATION_DONE
                         : DriveAudio.METADATA_STATUS_DISCOVERED;
@@ -2222,8 +2231,7 @@ public class DriveRepository {
         }
         String year = inferred != null && isNonEmpty(inferred.year) ? inferred.year.trim() : extractAlbumYear(folderName);
         int inferredTrack = inferred != null ? inferred.trackNumber : 0;
-        int trackNumber = audio.trackNumber > 0 ? audio.trackNumber
-                : (inferredTrack > 0 ? inferredTrack : extractLeadingTrackNumber(baseName));
+        int trackNumber = resolveTrackSortNumber(baseName, audio.trackNumber, inferredTrack);
 
         Song song = new Song();
         song.id = "D_" + audio.fileId;
@@ -2446,12 +2454,14 @@ public class DriveRepository {
         return right.isEmpty() ? albumLabel : right;
     }
 
-    private String stripLeadingTrackNumber(String value) {
+    static String stripLeadingTrackNumber(String value) {
         if (value == null) return null;
         String v = value.trim();
         if (v.isEmpty()) return v;
 
         v = v.replaceFirst("^(?i)track\\s*\\d{1,3}\\s*[-_.)]\\s*", "");
+        v = v.replaceFirst("^(?i)[A-F]\\d{1,2}\\s*[-_. )]\\s*", "");
+        v = v.replaceFirst("^(?i)[A-F]\\d{1,2}\\s+", "");
         v = v.replaceFirst("^\\d{1,2}\\s*[-_.]\\s*\\d{1,3}\\s*[-_.)]?\\s*", "");
         v = v.replaceFirst("^\\d{1,3}\\s*[-_.)]\\s*", "");
         v = v.replaceFirst("^\\d{1,3}\\s+", "");
@@ -2478,10 +2488,24 @@ public class DriveRepository {
         }
     }
 
-    private int extractLeadingTrackNumber(String value) {
+    static int extractLeadingTrackNumber(String value) {
         if (value == null) return 0;
         String v = value.trim();
         if (v.isEmpty()) return 0;
+
+        Matcher vinylMatcher = Pattern.compile("(?i)^([A-F])(\\d{1,2})(?=$|[\\s._\\-)])").matcher(v);
+        if (vinylMatcher.find()) {
+            char side = Character.toUpperCase(vinylMatcher.group(1).charAt(0));
+            int sideIndex = side - 'A';
+            try {
+                int track = Integer.parseInt(vinylMatcher.group(2));
+                if (track > 0 && sideIndex >= 0) {
+                    return sideIndex * VINYL_SIDE_TRACK_BLOCK + track;
+                }
+            } catch (Exception ignored) {
+                // Continue vers les autres heuristiques ci-dessous.
+            }
+        }
 
         // Supporte les préfixes "disque-piste" (ex: "1-01", "2.07", "1_12").
         // Dans ce cas, on retient la partie piste (01, 07, 12) pour l'ordre d'album.
@@ -2531,6 +2555,27 @@ public class DriveRepository {
         } catch (Exception ignored) {
             return 0;
         }
+    }
+
+    static int resolveTrackSortNumber(String baseName, int metadataTrackNumber, int fallbackTrackNumber) {
+        int filenameTrackNumber = extractLeadingTrackNumber(baseName);
+        if (hasVinylStyleTrackPrefix(baseName) && filenameTrackNumber > 0) {
+            return filenameTrackNumber;
+        }
+        if (metadataTrackNumber > 0) {
+            return metadataTrackNumber;
+        }
+        if (fallbackTrackNumber > 0) {
+            return fallbackTrackNumber;
+        }
+        return filenameTrackNumber;
+    }
+
+    private static boolean hasVinylStyleTrackPrefix(String value) {
+        if (value == null) return false;
+        String v = value.trim();
+        if (v.isEmpty()) return false;
+        return v.matches("(?i)^[A-F]\\d{1,2}(?=$|[\\s._\\-)]).*");
     }
 
     private boolean isLikelyArtist(String value) {

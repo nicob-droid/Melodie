@@ -1,6 +1,7 @@
 package com.melodie.player.ui.adapter;
 
 import android.net.Uri;
+import android.view.MotionEvent;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -31,17 +32,32 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         void onMenuClick(View anchor, Song song, int position);
     }
 
+    public interface OnStartDrag {
+        void onStartDrag(RecyclerView.ViewHolder viewHolder);
+    }
+
     private final OnSongClick listener;
     private final OnSongMenuClick menuListener;
+    private final boolean dragHandleEnabled;
+    private final OnStartDrag dragStartListener;
 
     public SongAdapter(OnSongClick listener) {
         this(listener, null);
     }
 
     public SongAdapter(OnSongClick listener, OnSongMenuClick menuListener) {
+        this(listener, menuListener, false, null);
+    }
+
+    public SongAdapter(OnSongClick listener,
+                       OnSongMenuClick menuListener,
+                       boolean dragHandleEnabled,
+                       OnStartDrag dragStartListener) {
         super(DIFF);
         this.listener = listener;
         this.menuListener = menuListener;
+        this.dragHandleEnabled = dragHandleEnabled;
+        this.dragStartListener = dragStartListener;
     }
 
     private static final DiffUtil.ItemCallback<Song> DIFF = new DiffUtil.ItemCallback<Song>() {
@@ -88,6 +104,19 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         h.more.setOnClickListener(v -> {
             if (menuListener != null) menuListener.onMenuClick(h.more, s, position);
         });
+        h.dragHandle.setVisibility(dragHandleEnabled ? View.VISIBLE : View.GONE);
+        if (dragHandleEnabled && dragStartListener != null) {
+            h.dragHandle.setOnTouchListener((v, event) -> {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    v.performClick();
+                    dragStartListener.onStartDrag(h);
+                    return true;
+                }
+                return false;
+            });
+        } else {
+            h.dragHandle.setOnTouchListener(null);
+        }
     }
 
     private Object toGlideSource(String cover) {
@@ -106,6 +135,7 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         final TextView subtitle;
         final TextView duration;
         final View more;
+        final View dragHandle;
 
         VH(@NonNull View itemView) {
             super(itemView);
@@ -114,6 +144,7 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
             subtitle = itemView.findViewById(R.id.subtitle);
             duration = itemView.findViewById(R.id.duration);
             more = itemView.findViewById(R.id.btn_more);
+            dragHandle = itemView.findViewById(R.id.drag_handle);
         }
     }
 }
