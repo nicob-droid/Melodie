@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Set;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
 import java.util.function.LongConsumer;
 
 import javax.inject.Inject;
@@ -300,6 +301,43 @@ public class MusicRepository {
                     normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                     normalizedCover.isEmpty() ? null : normalizedCover
             );
+        });
+    }
+
+    public void updateAlbumMetadataWithCallback(long albumId, String name, String releaseDate, String cover, Runnable onDone) {
+        if (albumId <= 0) return;
+        final String normalizedName = name != null ? name.trim() : "";
+        if (normalizedName.isEmpty()) return;
+        final String normalizedReleaseDate = releaseDate != null ? releaseDate.trim() : "";
+        final String normalizedCover = cover != null ? cover.trim() : "";
+        executor.execute(() -> {
+            try {
+                albumDao.updateMetadata(
+                        albumId,
+                        normalizedName,
+                        normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
+                        normalizedCover.isEmpty() ? null : normalizedCover
+                );
+                songDao.updateAlbumMetadataByAlbumId(
+                        albumId,
+                        normalizedName,
+                        normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
+                        normalizedCover.isEmpty() ? null : normalizedCover
+                );
+            } finally {
+                if (onDone != null) onDone.run();
+            }
+        });
+    }
+
+    public void searchAlbumCoverCandidates(String artist, String album, int limit,
+                                           Consumer<List<CoverArtFetcher.CoverCandidate>> callback) {
+        executor.execute(() -> {
+            List<CoverArtFetcher.CoverCandidate> candidates =
+                    coverArtFetcher.searchAlbumCoverCandidates(artist, album, limit);
+            if (callback != null) {
+                callback.accept(candidates);
+            }
         });
     }
 

@@ -13,7 +13,11 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.text.Normalizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -39,6 +43,23 @@ public class CoverArtFetcher {
 
     @Inject
     public CoverArtFetcher() {
+    }
+
+    public List<CoverCandidate> searchAlbumCoverCandidates(String artist, String album, int limit) {
+        String safeArtist = artist != null ? artist.trim() : "";
+        String safeAlbum = album != null ? album.trim() : "";
+        if (safeArtist.isEmpty() && safeAlbum.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        int safeLimit = Math.min(limit <= 0 ? 8 : limit, 20);
+        List<CoverCandidate> merged = new ArrayList<>();
+
+        merged.addAll(fetchCoverCandidatesFromDeezer(safeArtist, safeAlbum, safeLimit));
+        merged.addAll(fetchCoverCandidatesFromItunesByArtist(safeArtist, safeAlbum, safeLimit));
+        merged.addAll(fetchCoverCandidatesFromItunesGeneric(safeArtist, safeAlbum, safeLimit));
+
+        return dedupeAndLimitCandidates(merged, safeLimit);
     }
 
     public String fetchAlbumCover(String artist, String album) {
@@ -113,6 +134,16 @@ public class CoverArtFetcher {
         return result;
     }
 
+    private List<CoverCandidate> fetchCoverCandidatesFromDeezer(String artist, String album, int maxCandidates) {
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        List<CoverCandidate> candidates = new ArrayList<>();
+        candidates.addAll(fetchCoverCandidatesFromDeezerInternal(artist, normalizedAlbum, artist, album, maxCandidates));
+        if (!normalize(normalizedAlbum).equals(normalize(album))) {
+            candidates.addAll(fetchCoverCandidatesFromDeezerInternal(artist, album, artist, album, maxCandidates));
+        }
+        return dedupeAndLimitCandidates(candidates, maxCandidates);
+    }
+
     private String fetchFromDeezerInternal(String queryArtist, String queryAlbum,
                                            String scoreArtist, String scoreAlbum) {
         String query = buildDeezerQuery(queryArtist, queryAlbum);
@@ -125,6 +156,22 @@ public class CoverArtFetcher {
         } catch (Exception e) {
             Log.d(TAG, "Deezer cover lookup failed for " + query, e);
             return null;
+        }
+    }
+
+    private List<CoverCandidate> fetchCoverCandidatesFromDeezerInternal(String queryArtist, String queryAlbum,
+                                                                        String scoreArtist, String scoreAlbum,
+                                                                        int maxCandidates) {
+        String query = buildDeezerQuery(queryArtist, queryAlbum);
+        if (query.isEmpty()) return Collections.emptyList();
+
+        String endpoint = "https://api.deezer.com/search/album?q=" + Uri.encode(query);
+        try (InputStream input = openJsonStream(endpoint);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseArtworkCandidatesFromDeezer(reader, scoreArtist, scoreAlbum, 70, maxCandidates);
+        } catch (Exception e) {
+            Log.d(TAG, "Deezer cover suggestions lookup failed for " + query, e);
+            return Collections.emptyList();
         }
     }
 
@@ -205,6 +252,20 @@ public class CoverArtFetcher {
         }
     }
 
+    private List<CoverCandidate> fetchCoverCandidatesFromItunesByArtist(String artist, String album, int maxCandidates) {
+        if (artist.isEmpty()) return Collections.emptyList();
+        String endpoint = "https://itunes.apple.com/search?media=music&entity=album&attribute=artistTerm&limit=100&term="
+                + Uri.encode(artist);
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        try (InputStream input = openJsonStream(endpoint);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseArtworkCandidatesFromItunes(reader, artist, normalizedAlbum, 70, maxCandidates);
+        } catch (Exception e) {
+            Log.d(TAG, "iTunes artist cover suggestions lookup failed for " + artist, e);
+            return Collections.emptyList();
+        }
+    }
+
     private String fetchFromItunesGeneric(String artist, String album) {
         // Normalise le titre d'album pour éviter les requêtes trop verbeuses (Japan Edition, etc.)
         String normalizedAlbum = normalizeAlbumForDateLookup(album);
@@ -218,6 +279,21 @@ public class CoverArtFetcher {
         } catch (Exception e) {
             Log.d(TAG, "iTunes generic cover lookup failed for " + term, e);
             return null;
+        }
+    }
+
+    private List<CoverCandidate> fetchCoverCandidatesFromItunesGeneric(String artist, String album, int maxCandidates) {
+        String normalizedAlbum = normalizeAlbumForDateLookup(album);
+        String term = buildSearchTerm(artist, normalizedAlbum);
+        if (term.isEmpty()) return Collections.emptyList();
+
+        String endpoint = "https://itunes.apple.com/search?media=music&entity=album&limit=50&term=" + Uri.encode(term);
+        try (InputStream input = openJsonStream(endpoint);
+             JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            return parseArtworkCandidatesFromItunes(reader, artist, normalizedAlbum, 65, maxCandidates);
+        } catch (Exception e) {
+            Log.d(TAG, "iTunes generic cover suggestions lookup failed for " + term, e);
+            return Collections.emptyList();
         }
     }
 
@@ -991,6 +1067,61 @@ public class CoverArtFetcher {
         return bestArtwork.replace("100x100bb", "600x600bb");
     }
 
+    private List<CoverCandidate> parseArtworkCandidatesFromItunes(JsonReader reader, String expectedArtist,
+                                                                  String expectedAlbum, int minScore,
+                                                                  int maxCandidates) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        List<CoverCandidate> candidates = new ArrayList<>();
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if (!"results".equals(name)) {
+                reader.skipValue();
+                continue;
+            }
+
+            reader.beginArray();
+            while (reader.hasNext()) {
+                String artistName = "";
+                String collectionName = "";
+                String artworkUrl100 = null;
+
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String child = reader.nextName();
+                    if ("artistName".equals(child) && reader.peek() != JsonToken.NULL) {
+                        artistName = reader.nextString();
+                    } else if ("collectionName".equals(child) && reader.peek() != JsonToken.NULL) {
+                        collectionName = reader.nextString();
+                    } else if ("artworkUrl100".equals(child) && reader.peek() != JsonToken.NULL) {
+                        artworkUrl100 = reader.nextString();
+                    } else {
+                        reader.skipValue();
+                    }
+                }
+                reader.endObject();
+
+                int score = scoreCandidate(wantedArtist, wantedAlbum,
+                        normalize(artistName), normalize(collectionName));
+                if (artworkUrl100 != null && !artworkUrl100.trim().isEmpty() && score >= minScore) {
+                    candidates.add(new CoverCandidate(
+                            artworkUrl100.replace("100x100bb", "600x600bb"),
+                            "iTunes",
+                            artistName,
+                            collectionName,
+                            score
+                    ));
+                }
+            }
+            reader.endArray();
+        }
+        reader.endObject();
+
+        return trimCandidates(candidates, maxCandidates);
+    }
+
     private String parseBestArtworkFromDeezer(JsonReader reader, String expectedArtist,
                                               String expectedAlbum) throws Exception {
         String wantedArtist = normalize(expectedArtist);
@@ -1055,6 +1186,66 @@ public class CoverArtFetcher {
         }
         Log.d(TAG, "Deezer best score=" + bestScore + " threshold=70");
         return bestArtwork;
+    }
+
+    private List<CoverCandidate> parseArtworkCandidatesFromDeezer(JsonReader reader, String expectedArtist,
+                                                                  String expectedAlbum, int minScore,
+                                                                  int maxCandidates) throws Exception {
+        String wantedArtist = normalize(expectedArtist);
+        String wantedAlbum = normalize(expectedAlbum);
+        List<CoverCandidate> candidates = new ArrayList<>();
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if (!"data".equals(name)) {
+                reader.skipValue();
+                continue;
+            }
+
+            reader.beginArray();
+            while (reader.hasNext()) {
+                String artistName = "";
+                String albumName = "";
+                String artwork = null;
+
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String child = reader.nextName();
+                    if ("title".equals(child) && reader.peek() != JsonToken.NULL) {
+                        albumName = reader.nextString();
+                    } else if ("cover_xl".equals(child) && reader.peek() != JsonToken.NULL) {
+                        artwork = reader.nextString();
+                    } else if ("cover_big".equals(child) && reader.peek() != JsonToken.NULL && artwork == null) {
+                        artwork = reader.nextString();
+                    } else if ("artist".equals(child) && reader.peek() == JsonToken.BEGIN_OBJECT) {
+                        reader.beginObject();
+                        while (reader.hasNext()) {
+                            String artistField = reader.nextName();
+                            if ("name".equals(artistField) && reader.peek() != JsonToken.NULL) {
+                                artistName = reader.nextString();
+                            } else {
+                                reader.skipValue();
+                            }
+                        }
+                        reader.endObject();
+                    } else {
+                        reader.skipValue();
+                    }
+                }
+                reader.endObject();
+
+                int score = scoreCandidate(wantedArtist, wantedAlbum,
+                        normalize(artistName), normalize(albumName));
+                if (artwork != null && !artwork.trim().isEmpty() && score >= minScore) {
+                    candidates.add(new CoverCandidate(artwork, "Deezer", artistName, albumName, score));
+                }
+            }
+            reader.endArray();
+        }
+        reader.endObject();
+
+        return trimCandidates(candidates, maxCandidates);
     }
 
     private String parseBestReleaseDateFromDeezer(JsonReader reader, String expectedArtist,
@@ -1218,6 +1409,63 @@ public class CoverArtFetcher {
         Matcher matcher = YEAR_PATTERN.matcher(trimmed);
         if (!matcher.find()) return null;
         return matcher.group(1);
+    }
+
+    private List<CoverCandidate> dedupeAndLimitCandidates(List<CoverCandidate> candidates, int limit) {
+        if (candidates == null || candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Map<String, CoverCandidate> byKey = new LinkedHashMap<>();
+        for (CoverCandidate candidate : sortCandidates(candidates)) {
+            if (candidate == null || candidate.imageUrl == null || candidate.imageUrl.trim().isEmpty()) {
+                continue;
+            }
+            String key = candidate.imageUrl.trim();
+            CoverCandidate existing = byKey.get(key);
+            if (existing == null || candidate.score > existing.score) {
+                byKey.put(key, candidate);
+            }
+        }
+
+        List<CoverCandidate> deduped = sortCandidates(new ArrayList<>(byKey.values()));
+        if (deduped.size() > limit) {
+            return new ArrayList<>(deduped.subList(0, limit));
+        }
+        return deduped;
+    }
+
+    private List<CoverCandidate> trimCandidates(List<CoverCandidate> candidates, int limit) {
+        List<CoverCandidate> sorted = sortCandidates(candidates);
+        if (sorted.size() > limit) {
+            return new ArrayList<>(sorted.subList(0, limit));
+        }
+        return sorted;
+    }
+
+    private List<CoverCandidate> sortCandidates(List<CoverCandidate> candidates) {
+        List<CoverCandidate> sorted = new ArrayList<>();
+        if (candidates != null) {
+            sorted.addAll(candidates);
+        }
+        sorted.sort(Comparator.comparingInt((CoverCandidate candidate) -> candidate.score).reversed());
+        return sorted;
+    }
+
+    public static class CoverCandidate {
+        public final String imageUrl;
+        public final String provider;
+        public final String artistName;
+        public final String albumName;
+        public final int score;
+
+        public CoverCandidate(String imageUrl, String provider, String artistName, String albumName, int score) {
+            this.imageUrl = imageUrl;
+            this.provider = provider;
+            this.artistName = artistName;
+            this.albumName = albumName;
+            this.score = score;
+        }
     }
 
     private static class DiscogsMatch {

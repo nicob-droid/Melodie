@@ -136,7 +136,7 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         if (cover == null) return null;
         String trimmed = cover.trim();
         if (trimmed.isEmpty() || NO_REMOTE_COVER.equals(trimmed)) return null;
-        if (trimmed.startsWith("http") || trimmed.startsWith("content://")) {
+        if (trimmed.startsWith("http") || trimmed.startsWith("content://") || trimmed.startsWith("file://")) {
             return Uri.parse(trimmed);
         }
         return null;
@@ -150,6 +150,8 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         if (NO_REMOTE_COVER.equals(trimmed)) return false;
         // Une URL HTTP déjà connue : pas la peine de re-chercher même si Glide échoue.
         if (trimmed.startsWith("http")) return false;
+        // Fichier local (file://) : c'est une pochette téléchargée ou locale, ne pas chercher en ligne.
+        if (trimmed.startsWith("file://")) return false;
         // Albumart embarqué (content://) : si Glide échoue, on tente une pochette distante.
         return trimmed.startsWith("content://");
     }

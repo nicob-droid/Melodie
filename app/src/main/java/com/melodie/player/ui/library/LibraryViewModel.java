@@ -17,6 +17,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.LongConsumer;
 
 import javax.inject.Inject;
@@ -99,6 +100,15 @@ public class LibraryViewModel extends ViewModel {
 
     public void updateAlbumMetadata(long albumId, String name, String releaseDate, String cover) {
         repository.updateAlbumMetadata(albumId, name, releaseDate, cover);
+    }
+
+    public void updateAlbumMetadataWithCallback(long albumId, String name, String releaseDate, String cover, Runnable onDone) {
+        repository.updateAlbumMetadataWithCallback(albumId, name, releaseDate, cover, onDone);
+    }
+
+    public void searchAlbumCoverCandidates(String artist, String album, int limit,
+                                           Consumer<List<com.melodie.player.data.cover.CoverArtFetcher.CoverCandidate>> callback) {
+        repository.searchAlbumCoverCandidates(artist, album, limit, callback);
     }
 
     public LiveData<List<Song>> songsByAlbum(long albumId) {

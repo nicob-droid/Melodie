@@ -94,7 +94,7 @@ public class ArtistAdapter extends ListAdapter<ArtistData, ArtistAdapter.VH> {
         if (cover == null) return null;
         String trimmed = cover.trim();
         if (trimmed.isEmpty() || "__NO_REMOTE_COVER__".equals(trimmed)) return null;
-        if (trimmed.startsWith("http") || trimmed.startsWith("content://")) {
+        if (trimmed.startsWith("http") || trimmed.startsWith("content://") || trimmed.startsWith("file://")) {
             return Uri.parse(trimmed);
         }
         return null;

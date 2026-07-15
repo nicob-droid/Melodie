@@ -123,7 +123,7 @@ public class SongAdapter extends ListAdapter<Song, SongAdapter.VH> {
         if (cover == null) return null;
         String trimmed = cover.trim();
         if (trimmed.isEmpty() || NO_REMOTE_COVER.equals(trimmed)) return null;
-        if (trimmed.startsWith("http") || trimmed.startsWith("content://")) {
+        if (trimmed.startsWith("http") || trimmed.startsWith("content://") || trimmed.startsWith("file://")) {
             return Uri.parse(trimmed);
         }
         return null;
