@@ -153,6 +153,13 @@ public class DriveFragment extends Fragment {
         });
 
         viewModel.getDriveFolders().observe(getViewLifecycleOwner(), folders -> {
+            // Fix: Only display folders if user is actually authenticated
+            // Prevents showing cached folders when user is not logged in
+            if (!isDriveLoggedIn) {
+                folderAdapter.submitFolders(null);
+                updateLoadingPlaceholderVisibility();
+                return;
+            }
             if (waitingForFreshFolders || isDriveLoading) {
                 pendingFolders = folders;
                 return;
