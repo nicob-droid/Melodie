@@ -245,7 +245,7 @@ public class CoverArtFetcher {
         String normalizedAlbum = normalizeAlbumForDateLookup(album);
         try (InputStream input = openJsonStream(endpoint);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 100);
+            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 85);
         } catch (Exception e) {
             Log.d(TAG, "iTunes artist cover lookup failed for " + artist, e);
             return null;
@@ -275,7 +275,7 @@ public class CoverArtFetcher {
         String endpoint = "https://itunes.apple.com/search?media=music&entity=album&limit=50&term=" + Uri.encode(term);
         try (InputStream input = openJsonStream(endpoint);
              JsonReader reader = new JsonReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
-            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 95);
+            return parseBestArtworkFromItunes(reader, artist, normalizedAlbum, 70);
         } catch (Exception e) {
             Log.d(TAG, "iTunes generic cover lookup failed for " + term, e);
             return null;
@@ -1180,11 +1180,11 @@ public class CoverArtFetcher {
         reader.endObject();
 
         // Deezer est deja cible par artiste+album, seuil modere.
-        if (bestArtwork == null || bestArtwork.trim().isEmpty() || bestScore < 70) {
-            Log.d(TAG, "Deezer best score below threshold score=" + bestScore + " threshold=70");
+        if (bestArtwork == null || bestArtwork.trim().isEmpty() || bestScore < 60) {
+            Log.d(TAG, "Deezer best score below threshold score=" + bestScore + " threshold=60");
             return null;
         }
-        Log.d(TAG, "Deezer best score=" + bestScore + " threshold=70");
+        Log.d(TAG, "Deezer best score=" + bestScore + " threshold=60");
         return bestArtwork;
     }
 
@@ -1322,6 +1322,9 @@ public class CoverArtFetcher {
                 // Variantes type "Sean Lennon" vs "Sean Ono Lennon" : compter les tokens communs
                 int tokenScore = commonTokenScore(wantedArtist, candidateArtist);
                 if (tokenScore >= 24) score += 40;   // au moins 2 tokens significatifs communs
+                else if (tokenScore >= 12) score += 20;  // au moins 1 token commun
+                // Pour les abréviations courtes (< 5 chars), être plus indulgent : pénalité réduite
+                else if (wantedArtist.length() < 5) score -= 40;  // pénalité réduite pour abréviations
                 else score -= 130;
             }
         }
