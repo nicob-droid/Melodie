@@ -3,37 +3,38 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="12dp"
+    android:layout_marginBottom="6dp"
     app:cardBackgroundColor="@color/surface_dark"
-    app:cardCornerRadius="14dp"
+    app:cardCornerRadius="12dp"
     app:cardUseCompatPadding="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp">
 
         <TextView
             android:id="@+id/source_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="@color/text_primary"
-            android:textSize="16sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
             android:id="@+id/source_uri"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="2dp"
             android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
+            android:textSize="11sp" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="2dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -50,11 +51,10 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/source_remove"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/folders_source_remove"
-                style="@style/Widget.Material3.Button.TextButton" />
+                android:text="@string/folders_source_remove" />
         </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
-

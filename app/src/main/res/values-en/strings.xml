@@ -24,6 +24,9 @@
     <string name="library_artist_tracks_label">Artist tracks</string>
     <string name="library_album_tracks_title">Album: %1$s</string>
     <string name="library_artist_tracks_title">Artist: %1$s</string>
+    <string name="album_edit_metadata">Edit album metadata</string>
+    <string name="album_edit_title">Edit album</string>
+    <string name="album_edit_title_with_name">Edit: %1$s</string>
     <string name="album_edit_cover">Cover</string>
     <string name="album_edit_cover_not_set">No cover selected</string>
     <string name="album_edit_pick_cover">Choose a cover</string>
@@ -42,6 +45,16 @@
     <string name="album_edit_online_cover_downloaded">Cover downloaded and saved.</string>
     <string name="album_edit_online_cover_download_failed">Error downloading the cover. It will remain online.</string>
     <string name="album_edit_online_cover_invalid_url">Invalid cover URL.</string>
+    <string name="album_edit_clear_cover">Remove cover</string>
+    <string name="album_edit_name">Album title</string>
+    <string name="album_edit_name_hint">e.g. Random Access Memories</string>
+    <string name="album_edit_release_date">Album year</string>
+    <string name="album_edit_release_date_hint">e.g. 2013</string>
+    <string name="album_edit_release_date_invalid">Please enter a valid year (4 digits).</string>
+    <string name="album_edit_save">Save</string>
+    <string name="album_edit_saved">Album metadata saved.</string>
+    <string name="album_edit_name_required">Album title is required.</string>
+
     <string name="library_scan">Library scan</string>
     <string name="albums_empty">No albums to display</string>
     <string name="albums_empty_no_active_source">No active source</string>
@@ -53,14 +66,18 @@
     <!-- Folder sources -->
     <string name="folders_title">Used sources</string>
     <string name="folders_empty">No source added</string>
-    <string name="folders_add_source">Add source</string>
-    <string name="folders_add_drive_source">Add Google Drive source</string>
+    <string name="folders_add_source">Local source</string>
+    <string name="folders_add_drive_source">Google Drive</string>
     <string name="folders_source_enabled">Enabled</string>
     <string name="folders_source_disabled">Disabled</string>
     <string name="folders_source_remove">Remove</string>
     <string name="folders_remove_confirm_title">Remove source?</string>
     <string name="folders_remove_confirm_message">Do you really want to remove "%1$s"?</string>
     <string name="folders_remove_confirm_yes">Remove</string>
+    <string name="folders_remove_all_sources">Remove all sources</string>
+    <string name="folders_remove_all_confirm_title">Remove all sources?</string>
+    <string name="folders_remove_all_confirm_message">This will remove all local and Drive sources. Do you want to continue?</string>
+    <string name="folders_remove_all_confirm_yes">Remove all</string>
     <string name="folders_drive_sign_in_required">Sign in to Google Drive to add a source.</string>
     <string name="folders_drive_empty_open_drive">No Drive folder loaded yet. Open Google Drive to sync first.</string>
     <string name="folders_drive_sources_added">Google Drive sources added.</string>
@@ -93,6 +110,21 @@
     <string name="settings_cache">Cache</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_equalizer">Equalizer</string>
+    <string name="settings_legal_info">Legal information</string>
+    <string name="settings_legal_terms">Terms of use</string>
+    <string name="settings_legal_privacy">Privacy policy</string>
+    <string name="settings_legal_terms_content">By using Melodie, you agree to use the app in compliance with applicable laws and copyrights for your audio content.</string>
+    <string name="settings_legal_privacy_content">Melodie processes most data locally on your device. Some features (such as Google Drive) require authentication and network exchanges according to granted permissions.</string>
+    <string name="settings_about">About</string>
+    <string name="settings_about_version_value">App version: %1$s</string>
+    <string name="settings_reset_app">Reset app</string>
+    <string name="settings_reset_app_title">Reset app?</string>
+    <string name="settings_reset_app_message">This action deletes local data (library, playlists, sources, and sync cache), then restarts with a clean state.</string>
+    <string name="settings_reset_app_confirm_title">Final confirmation</string>
+    <string name="settings_reset_app_confirm_message">To confirm, type RESET below.</string>
+    <string name="settings_reset_app_type_reset_hint">Type RESET</string>
+    <string name="settings_reset_app_type_reset_error">Invalid confirmation. Type RESET exactly.</string>
+    <string name="settings_reset_app_done">App reset completed.</string>
 
     <!-- Drive -->
     <string name="drive_title">Google Drive</string>

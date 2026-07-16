@@ -115,8 +115,11 @@ public class FoldersViewModel extends ViewModel {
         repository.removeFolderSource(source);
     }
 
+    public void removeAllFolderSources() {
+        repository.removeAllFolderSources();
+    }
+
     private void publishSources() {
         folderSources.postValue(new ArrayList<>(persistedSources));
     }
 }
-

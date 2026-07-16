@@ -37,6 +37,7 @@ public class FoldersFragment extends Fragment {
     private FoldersViewModel viewModel;
     private FolderSourceAdapter adapter;
     private TextView emptyView;
+    private MaterialButton removeAllButton;
     private ActivityResultLauncher<Uri> addFolderLauncher;
 
     @Nullable
@@ -62,6 +63,7 @@ public class FoldersFragment extends Fragment {
         emptyView = view.findViewById(R.id.folders_empty);
         MaterialButton addButton = view.findViewById(R.id.btn_add_source);
         MaterialButton addDriveButton = view.findViewById(R.id.btn_add_drive_source);
+        removeAllButton = view.findViewById(R.id.btn_remove_all_sources);
 
         adapter = new FolderSourceAdapter(new FolderSourceAdapter.OnFolderSourceActionListener() {
             @Override
@@ -99,6 +101,9 @@ public class FoldersFragment extends Fragment {
         addButton.setOnClickListener(v -> addFolderLauncher.launch(null));
         // Demande utilisateur: ouvrir directement Google Drive, sans popup intermédiaire.
         addDriveButton.setOnClickListener(v -> openDriveScreen());
+        if (removeAllButton != null) {
+            removeAllButton.setOnClickListener(v -> confirmRemoveAllSources());
+        }
 
 
         viewModel.getFolderSources().observe(getViewLifecycleOwner(), this::submitSources);
@@ -112,6 +117,21 @@ public class FoldersFragment extends Fragment {
         adapter.submitList(sources);
         boolean empty = sources == null || sources.isEmpty();
         emptyView.setVisibility(empty ? View.VISIBLE : View.GONE);
+        if (removeAllButton != null) {
+            removeAllButton.setEnabled(!empty);
+        }
+    }
+
+    private void confirmRemoveAllSources() {
+        if (!isAdded()) return;
+
+        new MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.folders_remove_all_confirm_title)
+                .setMessage(R.string.folders_remove_all_confirm_message)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.folders_remove_all_confirm_yes, (dialog, which) ->
+                        viewModel.removeAllFolderSources())
+                .show();
     }
 
     private void confirmRemoveSource(FolderSource source) {

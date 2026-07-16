@@ -445,6 +445,19 @@ public class MusicRepository {
         });
     }
 
+    public void removeAllFolderSources() {
+        executor.execute(() -> {
+            // Empêche le ré-ajout automatique de la source locale seedée.
+            prefs.edit().putBoolean(PREF_LOCAL_SOURCE_SUPPRESSED, true).apply();
+
+            folderSourceDao.deleteAll();
+            songDao.deleteBySource(Song.SOURCE_LOCAL);
+            songDao.deleteBySource(Song.SOURCE_DRIVE);
+            rebuildAlbumsFromSongs();
+            syncPlaylistsWithSources();
+        });
+    }
+
     private void syncPlaylistsWithSources() {
         // Nettoie les références de playlists vers des morceaux supprimés.
         playlistDao.deleteOrphanSongRefs();

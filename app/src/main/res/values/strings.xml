@@ -65,14 +65,18 @@
     <!-- Sources de dossiers -->
     <string name="folders_title">Sources utilisées</string>
     <string name="folders_empty">Aucune source ajoutée</string>
-    <string name="folders_add_source">Ajouter une source</string>
-    <string name="folders_add_drive_source">Ajouter une source Google Drive</string>
+    <string name="folders_add_source">Source locale</string>
+    <string name="folders_add_drive_source">Google Drive</string>
     <string name="folders_source_enabled">Activée</string>
     <string name="folders_source_disabled">Désactivée</string>
     <string name="folders_source_remove">Supprimer</string>
     <string name="folders_remove_confirm_title">Supprimer la source ?</string>
     <string name="folders_remove_confirm_message">Voulez-vous vraiment supprimer "%1$s" ?</string>
     <string name="folders_remove_confirm_yes">Supprimer</string>
+    <string name="folders_remove_all_sources">Supprimer toutes les sources</string>
+    <string name="folders_remove_all_confirm_title">Supprimer toutes les sources ?</string>
+    <string name="folders_remove_all_confirm_message">Cette action supprimera toutes les sources locales et Drive. Voulez-vous continuer ?</string>
+    <string name="folders_remove_all_confirm_yes">Tout supprimer</string>
     <string name="folders_drive_sign_in_required">Connecte-toi à Google Drive pour ajouter une source.</string>
     <string name="folders_drive_empty_open_drive">Aucun dossier Drive chargé. Ouvre Google Drive pour synchroniser.</string>
     <string name="folders_drive_sources_added">Sources Google Drive ajoutées.</string>
@@ -182,4 +186,3 @@
         <item quantity="other">%1$d morceaux</item>
     </plurals>
 </resources>
-
