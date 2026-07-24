@@ -46,6 +46,10 @@ public class LibraryViewModel extends ViewModel {
         return repository.observeAllAlbums();
     }
 
+    public LiveData<List<Album>> hiddenAlbums() {
+        return repository.observeHiddenAlbums();
+    }
+
     public LiveData<Album> album(long albumId) {
         return repository.observeAlbum(albumId);
     }
@@ -104,6 +108,18 @@ public class LibraryViewModel extends ViewModel {
 
     public void updateAlbumMetadataWithCallback(long albumId, String name, String artist, String releaseDate, String cover, Runnable onDone) {
         repository.updateAlbumMetadataWithCallback(albumId, name, artist, releaseDate, cover, onDone);
+    }
+
+    public void setAlbumHidden(long albumId, boolean hidden, Runnable onDone) {
+        repository.setAlbumHidden(albumId, hidden, onDone);
+    }
+
+    public void getLocalSongUrisByAlbum(long albumId, Consumer<List<android.net.Uri>> callback) {
+        repository.getLocalSongUrisByAlbum(albumId, callback);
+    }
+
+    public void deleteAlbumFromLibrary(long albumId, Runnable onDone) {
+        repository.deleteAlbumFromLibrary(albumId, onDone);
     }
 
     public void searchAlbumCoverCandidates(String artist, String album, int limit,

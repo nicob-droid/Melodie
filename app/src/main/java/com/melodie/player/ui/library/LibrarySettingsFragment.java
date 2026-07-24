@@ -42,6 +42,7 @@ public class LibrarySettingsFragment extends Fragment {
 
         TextView eq = view.findViewById(R.id.settings_eq);
         TextView folders = view.findViewById(R.id.settings_folders);
+        TextView hiddenAlbums = view.findViewById(R.id.settings_hidden_albums);
         TextView legalTerms = view.findViewById(R.id.settings_legal_terms);
         TextView legalPrivacy = view.findViewById(R.id.settings_legal_privacy);
         TextView appVersion = view.findViewById(R.id.settings_app_version);
@@ -51,6 +52,8 @@ public class LibrarySettingsFragment extends Fragment {
 
         folders.setOnClickListener(v ->
                 NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.foldersFragment));
+        hiddenAlbums.setOnClickListener(v ->
+                NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.hiddenAlbumsFragment));
         eq.setOnClickListener(v ->
                 NavHostFragment.findNavController(LibrarySettingsFragment.this).navigate(R.id.equalizerFragment));
 

@@ -197,6 +197,15 @@ public class MediaStoreScanner {
         return safeArtist + "||" + safeAlbum;
     }
 
+    /**
+     * Calcule l'identifiant logique STABLE d'un album à partir de l'artiste et du nom.
+     * Utilisé aussi bien lors du scan que lors de l'application des corrections utilisateur,
+     * afin que deux albums rendus identiques (même artiste + nom effectifs) partagent le même id.
+     */
+    public static long computeLogicalAlbumId(String artist, String album) {
+        return toLogicalAlbumId(buildAlbumKey(artist, album));
+    }
+
     private static String normalize(String value) {
         if (value == null) return "";
         return value.trim().toLowerCase();

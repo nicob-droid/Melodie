@@ -3,5 +3,11 @@
     <item
         android:id="@+id/action_edit_album_metadata"
         android:title="@string/album_edit_metadata" />
+    <item
+        android:id="@+id/action_hide_album"
+        android:title="@string/album_hide" />
+    <item
+        android:id="@+id/action_delete_album"
+        android:title="@string/album_delete_with_files" />
 </menu>
 

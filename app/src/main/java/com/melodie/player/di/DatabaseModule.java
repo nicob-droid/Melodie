@@ -45,9 +45,24 @@ public class DatabaseModule {
                 db.execSQL("ALTER TABLE albums ADD COLUMN userEditedArtist INTEGER NOT NULL DEFAULT 0");
             }
         };
+        Migration MIGRATION_15_16 = new Migration(15, 16) {
+            @Override
+            public void migrate(@androidx.annotation.NonNull SupportSQLiteDatabase db) {
+                db.execSQL("ALTER TABLE albums ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+            }
+        };
+        Migration MIGRATION_16_17 = new Migration(16, 17) {
+            @Override
+            public void migrate(@androidx.annotation.NonNull SupportSQLiteDatabase db) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS song_overrides ("
+                        + "songId TEXT NOT NULL PRIMARY KEY, "
+                        + "artist TEXT, "
+                        + "album TEXT)");
+            }
+        };
         return Room.databaseBuilder(ctx, MelodieDatabase.class, "melodie.db")
                 .fallbackToDestructiveMigration()
-                .addMigrations(MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                 .build();
     }
 
@@ -59,6 +74,11 @@ public class DatabaseModule {
     @Provides
     public AlbumDao provideAlbumDao(MelodieDatabase db) {
         return db.albumDao();
+    }
+
+    @Provides
+    public com.melodie.player.data.db.SongOverrideDao provideSongOverrideDao(MelodieDatabase db) {
+        return db.songOverrideDao();
     }
 
     @Provides

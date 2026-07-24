@@ -58,7 +58,7 @@ public interface SongDao {
     String VISIBLE_SONGS_FILTER = "("
             + "(songs.source = 'LOCAL' AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)) "
             + "OR (songs.source = 'DRIVE' AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)) "
-            + ")";
+            + ") AND songs.albumId NOT IN (SELECT id FROM albums WHERE hidden = 1)";
 
     @Query("SELECT " + SONG_WITH_ALBUM_COVER_COLUMNS
             + " FROM songs LEFT JOIN albums ON albums.id = songs.albumId "
@@ -153,6 +153,12 @@ public interface SongDao {
 
     @Query("SELECT * FROM songs WHERE albumId IN (:albumIds)")
     List<Song> getByAlbumIdsSync(List<Long> albumIds);
+
+    @Query("SELECT * FROM songs WHERE albumId = :albumId")
+    List<Song> getByAlbumIdSync(long albumId);
+
+    @Query("DELETE FROM songs WHERE albumId = :albumId")
+    void deleteByAlbumId(long albumId);
 
     /** Redirige les chansons d'un album dupliqué vers l'album canonique. */
     @Query("UPDATE songs SET albumId = :newAlbumId WHERE albumId = :oldAlbumId")

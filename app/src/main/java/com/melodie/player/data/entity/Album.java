@@ -44,5 +44,9 @@ public class Album {
     /** Vrai si l'utilisateur a manuellement défini l'artiste via l'écran d'édition. */
     @ColumnInfo(defaultValue = "0")
     public boolean userEditedArtist = false;
+
+    /** Vrai si l'utilisateur a masqué l'album (les fichiers restent sur le téléphone). */
+    @ColumnInfo(defaultValue = "0")
+    public boolean hidden = false;
 }
 

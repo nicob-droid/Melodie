@@ -72,6 +72,11 @@
         android:label="@string/settings_folders" />
 
     <fragment
+        android:id="@+id/hiddenAlbumsFragment"
+        android:name="com.melodie.player.ui.library.HiddenAlbumsFragment"
+        android:label="@string/settings_hidden_albums" />
+
+    <fragment
         android:id="@+id/playlistDetailFragment"
         android:name="com.melodie.player.ui.library.PlaylistDetailFragment"
         android:label="@string/home_playlists">

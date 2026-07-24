@@ -21,6 +21,11 @@
             android:text="@string/settings_folders" />
 
         <TextView
+            android:id="@+id/settings_hidden_albums"
+            style="@style/SettingsItem"
+            android:text="@string/settings_hidden_albums" />
+
+        <TextView
             style="@style/SettingsSectionTitle"
             android:text="@string/settings_legal_info" />
 

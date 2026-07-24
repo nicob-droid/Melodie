@@ -19,10 +19,12 @@ import com.melodie.player.data.db.DriveSyncStateDao;
 import com.melodie.player.data.db.FolderSourceDao;
 import com.melodie.player.data.db.PlaylistDao;
 import com.melodie.player.data.db.SongDao;
+import com.melodie.player.data.db.SongOverrideDao;
 import com.melodie.player.data.entity.Album;
 import com.melodie.player.data.entity.FolderSource;
 import com.melodie.player.data.entity.Playlist;
 import com.melodie.player.data.entity.Song;
+import com.melodie.player.data.entity.SongOverride;
 import com.melodie.player.data.model.ArtistData;
 import com.melodie.player.data.model.PlaylistSummary;
 import com.melodie.player.data.scan.MediaStoreScanner;
@@ -52,6 +54,7 @@ public class MusicRepository {
     private static final String PREF_ONLINE_COVERS = "online_covers_enabled";
     private static final String PREF_LOCAL_SOURCE_SEEDED = "local_source_seeded";
     private static final String PREF_LOCAL_SOURCE_SUPPRESSED = "local_source_suppressed";
+    private static final String PREF_OVERRIDES_BACKFILLED = "song_overrides_backfilled";
     private static final String NO_REMOTE_COVER = "__NO_REMOTE_COVER__";
     private static final String DRIVE_SOURCE_PREFIX = "drive://folder/";
     private static final String LOCAL_SOURCE_TREE_URI = "local://music";
@@ -64,6 +67,7 @@ public class MusicRepository {
     private final AlbumDao albumDao;
     private final PlaylistDao playlistDao;
     private final FolderSourceDao folderSourceDao;
+    private final SongOverrideDao songOverrideDao;
     private final DriveFolderDao driveFolderDao;
     private final DriveAudioDao driveAudioDao;
     private final DriveSyncStateDao driveSyncStateDao;
@@ -79,6 +83,7 @@ public class MusicRepository {
                            AlbumDao albumDao,
                            PlaylistDao playlistDao,
                            FolderSourceDao folderSourceDao,
+                           SongOverrideDao songOverrideDao,
                            DriveFolderDao driveFolderDao,
                            DriveAudioDao driveAudioDao,
                            DriveSyncStateDao driveSyncStateDao,
@@ -91,6 +96,7 @@ public class MusicRepository {
         this.albumDao = albumDao;
         this.playlistDao = playlistDao;
         this.folderSourceDao = folderSourceDao;
+        this.songOverrideDao = songOverrideDao;
         this.driveFolderDao = driveFolderDao;
         this.driveAudioDao = driveAudioDao;
         this.driveSyncStateDao = driveSyncStateDao;
@@ -138,6 +144,10 @@ public class MusicRepository {
 
     public LiveData<List<Album>> observeAllAlbums() {
         return albumDao.observeAll();
+    }
+
+    public LiveData<List<Album>> observeHiddenAlbums() {
+        return albumDao.observeHidden();
     }
 
     public LiveData<Album> observeAlbum(long albumId) {
@@ -289,25 +299,8 @@ public class MusicRepository {
         final String normalizedArtist = artist != null ? artist.trim() : "";
         final String normalizedReleaseDate = releaseDate != null ? releaseDate.trim() : "";
         final String normalizedCover = cover != null ? cover.trim() : "";
-        executor.execute(() -> {
-            albumDao.updateMetadata(
-                    albumId,
-                    normalizedName,
-                    normalizedArtist.isEmpty() ? null : normalizedArtist,
-                    normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
-                    normalizedCover.isEmpty() ? null : normalizedCover
-            );
-            songDao.updateAlbumMetadataByAlbumId(
-                    albumId,
-                    normalizedName,
-                    normalizedArtist.isEmpty() ? null : normalizedArtist,
-                    normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
-                    normalizedCover.isEmpty() ? null : normalizedCover
-            );
-            // Reconstruit les albums pour fusionner ceux qui partagent désormais la même
-            // signature artiste||nom suite à la correction manuelle.
-            rebuildAlbumsFromSongs();
-        });
+        executor.execute(() -> applyAlbumMetadataInternal(
+                albumId, normalizedName, normalizedArtist, normalizedReleaseDate, normalizedCover));
     }
 
     public void updateAlbumMetadataWithCallback(long albumId, String name, String artist, String releaseDate, String cover, Runnable onDone) {
@@ -319,26 +312,61 @@ public class MusicRepository {
         final String normalizedCover = cover != null ? cover.trim() : "";
         executor.execute(() -> {
             try {
-                albumDao.updateMetadata(
-                        albumId,
-                        normalizedName,
-                        normalizedArtist.isEmpty() ? null : normalizedArtist,
-                        normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
-                        normalizedCover.isEmpty() ? null : normalizedCover
-                );
-                songDao.updateAlbumMetadataByAlbumId(
-                        albumId,
-                        normalizedName,
-                        normalizedArtist.isEmpty() ? null : normalizedArtist,
-                        normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
-                        normalizedCover.isEmpty() ? null : normalizedCover
-                );
-                // Fusionne les albums devenus identiques (même artiste + nom) après l'édition.
-                rebuildAlbumsFromSongs();
+                applyAlbumMetadataInternal(
+                        albumId, normalizedName, normalizedArtist, normalizedReleaseDate, normalizedCover);
             } finally {
                 if (onDone != null) onDone.run();
             }
         });
+    }
+
+    /**
+     * Applique une édition de métadonnées d'album : met à jour la table albums, mémorise la
+     * correction par chanson (durable au rescan) et recalcule l'id logique d'album à partir des
+     * valeurs effectives. Deux albums rendus identiques fusionnent ainsi immédiatement ET
+     * durablement (l'id logique est déterministe à partir de l'artiste + nom effectifs).
+     */
+    private void applyAlbumMetadataInternal(long albumId, String normalizedName, String normalizedArtist,
+                                            String normalizedReleaseDate, String normalizedCover) {
+        String effectiveArtist = normalizedArtist.isEmpty() ? null : normalizedArtist;
+        String effectiveReleaseDate = normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate;
+        String effectiveCover = normalizedCover.isEmpty() ? null : normalizedCover;
+
+        // Récupère les chansons AVANT de modifier leur albumId.
+        List<Song> songs = songDao.getByAlbumIdSync(albumId);
+
+        albumDao.updateMetadata(albumId, normalizedName, effectiveArtist, effectiveReleaseDate, effectiveCover);
+        songDao.updateAlbumMetadataByAlbumId(albumId, normalizedName, effectiveArtist, effectiveReleaseDate, effectiveCover);
+
+        if (songs != null && !songs.isEmpty()) {
+            long newAlbumId = MediaStoreScanner.computeLogicalAlbumId(
+                    effectiveArtist != null ? effectiveArtist : "", normalizedName);
+            List<SongOverride> overrides = new ArrayList<>();
+            List<Song> updatedSongs = new ArrayList<>();
+            for (Song song : songs) {
+                if (song == null || song.id == null) continue;
+                SongOverride override = new SongOverride();
+                override.songId = song.id;
+                override.artist = effectiveArtist;
+                override.album = normalizedName;
+                overrides.add(override);
+
+                song.artist = effectiveArtist;
+                song.album = normalizedName;
+                song.albumId = newAlbumId;
+                updatedSongs.add(song);
+            }
+            if (!overrides.isEmpty()) {
+                songOverrideDao.upsertAll(overrides);
+            }
+            if (!updatedSongs.isEmpty()) {
+                songDao.insertAll(updatedSongs); // REPLACE par songId : déplace les chansons vers le nouvel id.
+            }
+        }
+
+        // Reconstruit les albums : la fusion est désormais portée par l'id logique effectif,
+        // et les métadonnées éditées (pochette, année, masquage) sont restaurées par signature.
+        rebuildAlbumsFromSongs();
     }
 
     public void searchAlbumCoverCandidates(String artist, String album, int limit,
@@ -348,6 +376,70 @@ public class MusicRepository {
                     coverArtFetcher.searchAlbumCoverCandidates(artist, album, limit);
             if (callback != null) {
                 callback.accept(candidates);
+            }
+        });
+    }
+
+    /** Masque ou réaffiche un album sans toucher aux fichiers du téléphone. */
+    public void setAlbumHidden(long albumId, boolean hidden, Runnable onDone) {
+        if (albumId <= 0) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                albumDao.setHidden(albumId, hidden);
+            } finally {
+                if (onDone != null) onDone.run();
+            }
+        });
+    }
+
+    /** Renvoie les URIs de contenu des morceaux LOCAUX d'un album (pour suppression des fichiers). */
+    public void getLocalSongUrisByAlbum(long albumId, Consumer<List<Uri>> callback) {
+        executor.execute(() -> {
+            List<Uri> uris = new ArrayList<>();
+            for (Song song : songDao.getByAlbumIdSync(albumId)) {
+                if (song == null || !Song.SOURCE_LOCAL.equals(song.source)) continue;
+                if (song.path == null || song.path.trim().isEmpty()) continue;
+                try {
+                    uris.add(Uri.parse(song.path));
+                } catch (Exception ignored) {
+                    // URI invalide : on ignore ce morceau.
+                }
+            }
+            if (callback != null) callback.accept(uris);
+        });
+    }
+
+    /**
+     * Purge un album et ses morceaux de la bibliothèque (à appeler après la suppression
+     * effective des fichiers). Nettoie aussi les références de playlists devenues orphelines.
+     */
+    public void deleteAlbumFromLibrary(long albumId, Runnable onDone) {
+        if (albumId <= 0) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                // Supprime aussi les corrections mémorisées pour ces chansons.
+                List<String> songIds = new ArrayList<>();
+                for (Song song : songDao.getByAlbumIdSync(albumId)) {
+                    if (song != null && song.id != null) songIds.add(song.id);
+                }
+                if (!songIds.isEmpty()) {
+                    songOverrideDao.deleteByIds(songIds);
+                }
+                songDao.deleteByAlbumId(albumId);
+                List<Long> ids = new ArrayList<>();
+                ids.add(albumId);
+                albumDao.deleteByIds(ids);
+                playlistDao.deleteOrphanSongRefs();
+                playlistDao.deleteEmptyPlaylists();
+                rebuildAlbumsFromSongs();
+            } finally {
+                if (onDone != null) onDone.run();
             }
         });
     }
@@ -592,6 +684,9 @@ public class MusicRepository {
                         && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
                     rebuilt.releaseDate = saved.releaseDate;
                 }
+                if (saved.hidden) {
+                    rebuilt.hidden = true;
+                }
             }
             rebuiltAlbums.add(rebuilt);
         }
@@ -638,6 +733,7 @@ public class MusicRepository {
                 songDao.deleteBySource(Song.SOURCE_LOCAL);
                 songDao.deleteBySource(Song.SOURCE_DRIVE);
                 albumDao.clear();
+                songOverrideDao.clear();
                 folderSourceDao.deleteAll();
                 driveFolderDao.deleteAll();
                 driveAudioDao.clear();
@@ -838,11 +934,84 @@ public class MusicRepository {
       */
      private void performFullScan() {
           ensureDefaultLocalSourceSeeded();
+          // Migration douce : convertit les éditions d'artiste existantes en corrections par
+          // chanson pour rendre leurs fusions durables (une seule fois).
+          backfillOverridesOnce();
          // 2. Scan MediaStore.
          MediaStoreScanner.ScanResult result = MediaStoreScanner.scan(context, buildActiveSourceRoots());
+         // Réapplique les corrections utilisateur (artiste / nom d'album) mémorisées par chanson,
+         // et recalcule l'id logique d'album pour que les fusions survivent au rescan.
+         applySongOverrides(result.songs);
          songDao.deleteBySource(Song.SOURCE_LOCAL);
          songDao.insertAll(result.songs);
           rebuildAlbumsFromSongs();
+     }
+
+     /**
+      * Applique les corrections de métadonnées mémorisées (table song_overrides) aux chansons
+      * fraîchement scannées, puis recalcule leur {@code albumId} logique à partir des valeurs
+      * effectives. Deux albums rendus identiques par l'utilisateur obtiennent ainsi le même id
+      * et fusionnent automatiquement, de manière durable.
+      */
+     /**
+      * Convertit UNE SEULE FOIS les éditions d'artiste déjà présentes (albums userEditedArtist)
+      * en corrections par chanson, afin que leurs fusions deviennent durables sans que
+      * l'utilisateur ait à ré-éditer. Idempotent grâce à un drapeau en préférences.
+      */
+     private void backfillOverridesOnce() {
+         if (prefs.getBoolean(PREF_OVERRIDES_BACKFILLED, false)) return;
+         try {
+             List<SongOverride> overrides = new ArrayList<>();
+             for (Album album : albumDao.getAllSync()) {
+                 if (album == null || !album.userEditedArtist) continue;
+                 String editedArtist = album.artist != null ? album.artist.trim() : "";
+                 if (editedArtist.isEmpty()) continue;
+                 String editedName = album.name != null ? album.name.trim() : "";
+                 for (Song song : songDao.getByAlbumIdSync(album.id)) {
+                     if (song == null || song.id == null) continue;
+                     SongOverride override = new SongOverride();
+                     override.songId = song.id;
+                     override.artist = editedArtist;
+                     override.album = editedName.isEmpty() ? null : editedName;
+                     overrides.add(override);
+                 }
+             }
+             if (!overrides.isEmpty()) {
+                 songOverrideDao.upsertAll(overrides);
+             }
+         } catch (Exception e) {
+             android.util.Log.w("MusicRepository", "backfillOverridesOnce failed", e);
+         } finally {
+             prefs.edit().putBoolean(PREF_OVERRIDES_BACKFILLED, true).apply();
+         }
+     }
+
+     private void applySongOverrides(List<Song> songs) {
+         if (songs == null || songs.isEmpty()) return;
+         Map<String, SongOverride> overrides = new HashMap<>();
+         for (SongOverride override : songOverrideDao.getAllSync()) {
+             if (override != null && override.songId != null) {
+                 overrides.put(override.songId, override);
+             }
+         }
+         if (overrides.isEmpty()) return;
+         for (Song song : songs) {
+             if (song == null || song.id == null) continue;
+             SongOverride override = overrides.get(song.id);
+             if (override == null) continue;
+             boolean changed = false;
+             if (override.artist != null && !override.artist.trim().isEmpty()) {
+                 song.artist = override.artist.trim();
+                 changed = true;
+             }
+             if (override.album != null && !override.album.trim().isEmpty()) {
+                 song.album = override.album.trim();
+                 changed = true;
+             }
+             if (changed) {
+                 song.albumId = MediaStoreScanner.computeLogicalAlbumId(song.artist, song.album);
+             }
+         }
      }
 
      private void rebuildAlbumsFromSongs(Map<Long, Album> savedAlbums) {
@@ -930,6 +1099,10 @@ public class MusicRepository {
                 } else if ((album.releaseDate == null || album.releaseDate.trim().isEmpty())
                         && saved.releaseDate != null && !saved.releaseDate.trim().isEmpty()) {
                     album.releaseDate = saved.releaseDate;
+                }
+                // Préserve l'état "masqué" choisi par l'utilisateur malgré le rescan.
+                if (saved.hidden) {
+                    album.hidden = true;
                 }
             }
          }
@@ -1037,6 +1210,10 @@ public class MusicRepository {
                  }
                  if (canonical.sourceType != dupe.sourceType) {
                      canonical.sourceType = Album.SOURCE_MIXED;
+                 }
+                 // Si l'un des doublons est masqué, l'album fusionné reste masqué.
+                 if (dupe.hidden) {
+                     canonical.hidden = true;
                  }
                  canonical.count += dupe.count;
 
@@ -1156,6 +1333,12 @@ public class MusicRepository {
           if (cover == null) return "";
           String trimmed = cover.trim();
           if (trimmed.isEmpty() || NO_REMOTE_COVER.equals(trimmed)) return "";
+          // Les pochettes locales (content:// albumart, file://) sont propres à chaque album_id
+          // MediaStore : deux albums identiques scindés par MediaStore ont des URIs différentes
+          // sans que l'illustration diffère réellement. On les ignore donc pour la signature de
+          // fusion. Seules les pochettes distantes (http) distinguent réellement deux albums.
+          String lower = trimmed.toLowerCase();
+          if (lower.startsWith("content://") || lower.startsWith("file://")) return "";
           return trimmed;
       }
 

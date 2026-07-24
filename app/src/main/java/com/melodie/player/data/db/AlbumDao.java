@@ -25,6 +25,7 @@ public interface AlbumDao {
            "  WHERE songs.albumId = albums.id " +
            "    AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)" +
            ") " +
+           "AND albums.hidden = 0 " +
            "ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC")
     LiveData<List<Album>> observeAll();
 
@@ -34,11 +35,16 @@ public interface AlbumDao {
            "  WHERE songs.albumId = albums.id " +
            "    AND songs.folderSourceId IN (SELECT id FROM folder_sources WHERE enabled = 1)" +
            ") " +
+           "AND albums.hidden = 0 " +
            "ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC LIMIT :limit")
     LiveData<List<Album>> observeRecent(int limit);
 
     @Query("SELECT * FROM albums WHERE id = :albumId LIMIT 1")
     LiveData<Album> observeById(long albumId);
+
+    @Query("SELECT * FROM albums WHERE hidden = 1 " +
+           "ORDER BY COALESCE(artist, '') COLLATE NOCASE ASC, name COLLATE NOCASE ASC")
+    LiveData<List<Album>> observeHidden();
 
     @Query("UPDATE albums SET cover = :cover WHERE id = :albumId")
     void updateCover(long albumId, String cover);
@@ -53,6 +59,9 @@ public interface AlbumDao {
 
     @Query("UPDATE albums SET releaseDate = :releaseDate WHERE id = :albumId")
     void updateReleaseDate(long albumId, String releaseDate);
+
+    @Query("UPDATE albums SET hidden = :hidden WHERE id = :albumId")
+    void setHidden(long albumId, boolean hidden);
 
     @Query("UPDATE albums SET name = :name, artist = :artist, releaseDate = :releaseDate, cover = :cover, " +
            "userEditedCover = CASE WHEN :cover IS NOT NULL THEN 1 ELSE 0 END, " +
