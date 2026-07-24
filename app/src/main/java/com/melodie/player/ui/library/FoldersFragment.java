@@ -62,7 +62,6 @@ public class FoldersFragment extends Fragment {
         RecyclerView recyclerView = view.findViewById(R.id.folders_recycler);
         emptyView = view.findViewById(R.id.folders_empty);
         MaterialButton addButton = view.findViewById(R.id.btn_add_source);
-        MaterialButton addDriveButton = view.findViewById(R.id.btn_add_drive_source);
         removeAllButton = view.findViewById(R.id.btn_remove_all_sources);
 
         adapter = new FolderSourceAdapter(new FolderSourceAdapter.OnFolderSourceActionListener() {
@@ -99,8 +98,9 @@ public class FoldersFragment extends Fragment {
                 });
 
         addButton.setOnClickListener(v -> addFolderLauncher.launch(null));
-        // Demande utilisateur: ouvrir directement Google Drive, sans popup intermédiaire.
-        addDriveButton.setOnClickListener(v -> openDriveScreen());
+        // Source Google Drive désactivée (accès restreint sans domaine vérifié).
+        // Le bouton correspondant est masqué dans le layout ; on ne branche donc
+        // plus aucune navigation vers l'écran Drive.
         if (removeAllButton != null) {
             removeAllButton.setOnClickListener(v -> confirmRemoveAllSources());
         }
@@ -109,9 +109,6 @@ public class FoldersFragment extends Fragment {
         viewModel.getFolderSources().observe(getViewLifecycleOwner(), this::submitSources);
     }
 
-    private void openDriveScreen() {
-        NavHostFragment.findNavController(this).navigate(R.id.driveFragment);
-    }
 
     private void submitSources(List<FolderSource> sources) {
         adapter.submitList(sources);

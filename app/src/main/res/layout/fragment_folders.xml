@@ -40,20 +40,22 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_add_source"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="@string/folders_add_source"
             app:icon="@android:drawable/ic_input_add"
             app:iconGravity="textStart"
             app:iconPadding="8dp" />
 
+        <!-- Source Google Drive désactivée (accès restreint sans domaine vérifié).
+             On conserve le code sous-jacent mais l'accès UI est masqué. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_add_drive_source"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
+            android:visibility="gone"
             android:text="@string/folders_add_drive_source"
             app:icon="@android:drawable/ic_menu_upload"
             app:iconGravity="textStart"

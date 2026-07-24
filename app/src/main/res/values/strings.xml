@@ -75,7 +75,7 @@
     <string name="folders_remove_confirm_yes">Supprimer</string>
     <string name="folders_remove_all_sources">Supprimer toutes les sources</string>
     <string name="folders_remove_all_confirm_title">Supprimer toutes les sources ?</string>
-    <string name="folders_remove_all_confirm_message">Cette action supprimera toutes les sources locales et Drive. Voulez-vous continuer ?</string>
+    <string name="folders_remove_all_confirm_message">Cette action supprimera toutes les sources locales. Voulez-vous continuer ?</string>
     <string name="folders_remove_all_confirm_yes">Tout supprimer</string>
     <string name="folders_drive_sign_in_required">Connecte-toi à Google Drive pour ajouter une source.</string>
     <string name="folders_drive_empty_open_drive">Aucun dossier Drive chargé. Ouvre Google Drive pour synchroniser.</string>
