@@ -401,7 +401,9 @@ public class AlbumEditFragment extends Fragment {
                     saveButton.setEnabled(true);
                 }
                 Toast.makeText(requireContext(), R.string.album_edit_saved, Toast.LENGTH_SHORT).show();
-                NavHostFragment.findNavController(AlbumEditFragment.this).navigateUp();
+                // Retour à la liste des albums plutôt que navigateUp(), car l'album peut avoir
+                // fusionné et son id logique changé. Cela évite d'afficher un album vide.
+                NavHostFragment.findNavController(AlbumEditFragment.this).navigate(R.id.libraryFragment);
             });
         });
     }
