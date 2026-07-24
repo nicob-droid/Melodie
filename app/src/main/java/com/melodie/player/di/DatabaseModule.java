@@ -39,9 +39,15 @@ public class DatabaseModule {
                 db.execSQL("ALTER TABLE albums ADD COLUMN userEditedReleaseDate INTEGER NOT NULL DEFAULT 0");
             }
         };
+        Migration MIGRATION_14_15 = new Migration(14, 15) {
+            @Override
+            public void migrate(@androidx.annotation.NonNull SupportSQLiteDatabase db) {
+                db.execSQL("ALTER TABLE albums ADD COLUMN userEditedArtist INTEGER NOT NULL DEFAULT 0");
+            }
+        };
         return Room.databaseBuilder(ctx, MelodieDatabase.class, "melodie.db")
                 .fallbackToDestructiveMigration()
-                .addMigrations(MIGRATION_13_14)
+                .addMigrations(MIGRATION_13_14, MIGRATION_14_15)
                 .build();
     }
 

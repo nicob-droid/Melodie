@@ -16,7 +16,7 @@ import com.melodie.player.data.entity.DriveEnrichmentJob;
 
 @Database(
         entities = {Song.class, Album.class, Playlist.class, PlaylistSong.class, DriveFolder.class, DriveAudio.class, FolderSource.class, DriveSyncState.class, DriveSyncSession.class, DriveEnrichmentJob.class},
-        version = 14,
+        version = 15,
         exportSchema = false
 )
 public abstract class MelodieDatabase extends RoomDatabase {

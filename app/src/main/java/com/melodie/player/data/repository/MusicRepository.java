@@ -304,6 +304,9 @@ public class MusicRepository {
                     normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                     normalizedCover.isEmpty() ? null : normalizedCover
             );
+            // Reconstruit les albums pour fusionner ceux qui partagent désormais la même
+            // signature artiste||nom suite à la correction manuelle.
+            rebuildAlbumsFromSongs();
         });
     }
 
@@ -330,6 +333,8 @@ public class MusicRepository {
                         normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                         normalizedCover.isEmpty() ? null : normalizedCover
                 );
+                // Fusionne les albums devenus identiques (même artiste + nom) après l'édition.
+                rebuildAlbumsFromSongs();
             } finally {
                 if (onDone != null) onDone.run();
             }
@@ -570,6 +575,10 @@ public class MusicRepository {
                 if (saved.name != null && !saved.name.trim().isEmpty()) {
                     rebuilt.name = saved.name.trim();
                 }
+                if (saved.userEditedArtist && saved.artist != null && !saved.artist.trim().isEmpty()) {
+                    rebuilt.artist = saved.artist.trim();
+                    rebuilt.userEditedArtist = true;
+                }
                 if (saved.userEditedCover && saved.cover != null && !saved.cover.trim().isEmpty()) {
                     rebuilt.cover = saved.cover.trim();
                     rebuilt.userEditedCover = true;
@@ -590,6 +599,13 @@ public class MusicRepository {
         albumDao.deleteByIds(targets);
         if (!rebuiltAlbums.isEmpty()) {
             albumDao.insertAll(rebuiltAlbums);
+        }
+
+        for (Album rebuilt : rebuiltAlbums) {
+            if (rebuilt != null && rebuilt.userEditedArtist
+                    && rebuilt.artist != null && !rebuilt.artist.trim().isEmpty()) {
+                songDao.updateArtistByAlbumId(rebuilt.id, rebuilt.artist.trim());
+            }
         }
     }
 
@@ -896,6 +912,12 @@ public class MusicRepository {
                  if (saved.name != null && !saved.name.trim().isEmpty()) {
                     album.name = saved.name.trim();
                 }
+                if (saved.userEditedArtist && saved.artist != null && !saved.artist.trim().isEmpty()) {
+                    // L'utilisateur a corrigé l'artiste : on préserve son choix malgré le rescan
+                    // (indispensable pour que la fusion par signature artiste||nom fonctionne).
+                    album.artist = saved.artist.trim();
+                    album.userEditedArtist = true;
+                }
                 if (saved.userEditedCover && saved.cover != null && !saved.cover.trim().isEmpty()) {
                     album.cover = saved.cover.trim();
                     album.userEditedCover = true;
@@ -912,6 +934,9 @@ public class MusicRepository {
             }
          }
 
+         // Fusionne les albums ayant la même signature (artiste + nom) avant l'insertion.
+         mergeAlbumDuplicates(albumMap);
+
          List<Album> rebuiltAlbums = new ArrayList<>(albumMap.values());
          rebuiltAlbums.sort(Comparator
                  .comparing((Album album) -> album.artist != null ? album.artist : "", String.CASE_INSENSITIVE_ORDER)
@@ -922,6 +947,108 @@ public class MusicRepository {
          albumDao.deleteOrphans();
          if (!rebuiltAlbums.isEmpty()) {
              albumDao.insertAll(rebuiltAlbums);
+         }
+
+         // Réapplique aux chansons l'artiste corrigé manuellement : après un rescan MediaStore,
+         // les chansons ont été réinsérées avec les balises brutes du fichier, ce qui écraserait
+         // sinon l'artiste édité (et casserait la fusion basée sur la signature artiste||nom).
+         for (Album rebuilt : rebuiltAlbums) {
+             if (rebuilt != null && rebuilt.userEditedArtist
+                     && rebuilt.artist != null && !rebuilt.artist.trim().isEmpty()) {
+                 songDao.updateArtistByAlbumId(rebuilt.id, rebuilt.artist.trim());
+             }
+         }
+     }
+
+     /**
+      * Fusionne les albums qui partagent la même signature (artiste||nom).
+      * Les chansons des doublons sont redirigées en base vers l'album canonique
+      * (celui avec les meilleures métadonnées, ou le plus petit id).
+      * Les doublons sont retirés de {@code albumMap}.
+      */
+     private void mergeAlbumDuplicates(Map<Long, Album> albumMap) {
+         // Regroupe les albumIds par signature artiste||nom||annee.
+         // L'annee est incluse pour NE PAS fusionner deux albums de meme artiste/nom mais
+         // d'annees differentes (ex. edition originale vs reedition/remaster).
+         Map<String, List<Long>> bySignature = new HashMap<>();
+         for (Map.Entry<Long, Album> e : albumMap.entrySet()) {
+             Album a = e.getValue();
+             String sig = mergeSignature(a.artist, a.name, a.releaseDate, a.cover);
+             if (sig == null || sig.isEmpty()) continue;
+             if (!bySignature.containsKey(sig)) {
+                 bySignature.put(sig, new ArrayList<>());
+             }
+             bySignature.get(sig).add(e.getKey());
+         }
+
+         for (List<Long> ids : bySignature.values()) {
+             if (ids.size() <= 1) continue;
+
+             // Choix de l'album canonique : édition manuelle > pochette HTTP > plus petit id
+             ids.sort((a, b) -> {
+                 Album aa = albumMap.get(a);
+                 Album ab = albumMap.get(b);
+                 if (aa == null && ab == null) return Long.compare(a, b);
+                 if (aa == null) return 1;
+                 if (ab == null) return -1;
+                 boolean aaEdited = aa.userEditedCover || aa.userEditedReleaseDate;
+                 boolean abEdited = ab.userEditedCover || ab.userEditedReleaseDate;
+                 if (aaEdited && !abEdited) return -1;
+                 if (!aaEdited && abEdited) return 1;
+                 boolean aaCover = isHttpCover(aa.cover);
+                 boolean abCover = isHttpCover(ab.cover);
+                 if (aaCover && !abCover) return -1;
+                 if (!aaCover && abCover) return 1;
+                 return Long.compare(a, b);
+             });
+
+             long canonicalId = ids.get(0);
+             Album canonical = albumMap.get(canonicalId);
+             if (canonical == null) continue;
+
+             for (int i = 1; i < ids.size(); i++) {
+                 long dupeId = ids.get(i);
+                 Album dupe = albumMap.get(dupeId);
+                 if (dupe == null) continue;
+
+                 // Propagation des meilleures métadonnées vers le canonical
+                 if (dupe.userEditedCover && !canonical.userEditedCover
+                         && dupe.cover != null && !dupe.cover.trim().isEmpty()) {
+                     canonical.cover = dupe.cover.trim();
+                     canonical.userEditedCover = true;
+                 } else if (!isHttpCover(canonical.cover) && isHttpCover(dupe.cover)) {
+                     canonical.cover = dupe.cover;
+                 }
+                 if (dupe.userEditedReleaseDate && !canonical.userEditedReleaseDate
+                         && dupe.releaseDate != null && !dupe.releaseDate.trim().isEmpty()) {
+                     canonical.releaseDate = dupe.releaseDate.trim();
+                     canonical.userEditedReleaseDate = true;
+                 } else if ((canonical.releaseDate == null || canonical.releaseDate.trim().isEmpty())
+                         && dupe.releaseDate != null && !dupe.releaseDate.trim().isEmpty()) {
+                     canonical.releaseDate = dupe.releaseDate.trim();
+                 }
+                 if (dupe.userEditedArtist && !canonical.userEditedArtist
+                         && dupe.artist != null && !dupe.artist.trim().isEmpty()) {
+                     canonical.artist = dupe.artist.trim();
+                     canonical.userEditedArtist = true;
+                 } else if ((canonical.artist == null || canonical.artist.trim().isEmpty())
+                         && dupe.artist != null && !dupe.artist.trim().isEmpty()) {
+                     canonical.artist = dupe.artist.trim();
+                 }
+                 if (canonical.sourceType != dupe.sourceType) {
+                     canonical.sourceType = Album.SOURCE_MIXED;
+                 }
+                 canonical.count += dupe.count;
+
+                 // Redirige toutes les chansons du doublon vers le canonical
+                 songDao.updateAlbumId(dupeId, canonicalId);
+
+                 albumMap.remove(dupeId);
+                 android.util.Log.d("MusicRepository",
+                         "mergeAlbumDuplicates: merged albumId=" + dupeId
+                                 + " into canonical=" + canonicalId
+                                 + " sig=" + albumSignature(canonical.artist, canonical.name));
+             }
          }
      }
 
@@ -994,6 +1121,42 @@ public class MusicRepository {
           String normalizedAlbum = normalizeText(albumName);
           if (normalizedAlbum.isEmpty()) return "";
           return normalizedArtist + "||" + normalizedAlbum;
+      }
+
+      /**
+       * Signature utilisee pour la FUSION des doublons : artiste||nom||annee||pochette.
+       * Contrairement a {@link #albumSignature(String, String)}, l'annee ET la pochette sont
+       * incluses afin que deux albums de meme artiste et nom mais d'annee OU de pochette
+       * differente ne soient PAS fusionnes.
+       */
+      private String mergeSignature(String artist, String albumName, String releaseDate, String cover) {
+          String base = albumSignature(artist, albumName);
+          if (base.isEmpty()) return "";
+          return base + "||" + normalizeYear(releaseDate) + "||" + normalizeCoverForSignature(cover);
+      }
+
+      /** Extrait l'annee (4 chiffres) d'une date de sortie, sinon renvoie la valeur normalisee. */
+      private String normalizeYear(String releaseDate) {
+          if (releaseDate == null) return "";
+          String trimmed = releaseDate.trim();
+          if (trimmed.isEmpty()) return "";
+          java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(\\d{4})").matcher(trimmed);
+          if (matcher.find()) {
+              return matcher.group(1);
+          }
+          return trimmed.toLowerCase();
+      }
+
+      /**
+       * Normalise la pochette pour la signature de fusion. Les valeurs "absentes"
+       * (null, vide, sentinel "pochette introuvable") sont ramenees a une chaine vide
+       * pour etre considerees comme equivalentes.
+       */
+      private String normalizeCoverForSignature(String cover) {
+          if (cover == null) return "";
+          String trimmed = cover.trim();
+          if (trimmed.isEmpty() || NO_REMOTE_COVER.equals(trimmed)) return "";
+          return trimmed;
       }
 
       private String normalizeText(String value) {

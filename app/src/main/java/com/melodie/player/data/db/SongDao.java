@@ -123,6 +123,10 @@ public interface SongDao {
     @Query("UPDATE songs SET album = :albumName, artist = :artistName, releaseDate = :releaseDate, cover = :cover WHERE albumId = :albumId")
     void updateAlbumMetadataByAlbumId(long albumId, String albumName, String artistName, String releaseDate, String cover);
 
+    /** Réapplique uniquement l'artiste édité aux chansons d'un album (après un rescan MediaStore). */
+    @Query("UPDATE songs SET artist = :artistName WHERE albumId = :albumId")
+    void updateArtistByAlbumId(long albumId, String artistName);
+
     @Query("SELECT DISTINCT artist FROM songs WHERE artist IS NOT NULL AND " + VISIBLE_SONGS_FILTER + " ORDER BY artist COLLATE NOCASE ASC")
     LiveData<List<String>> observeArtists();
 
@@ -149,4 +153,8 @@ public interface SongDao {
 
     @Query("SELECT * FROM songs WHERE albumId IN (:albumIds)")
     List<Song> getByAlbumIdsSync(List<Long> albumIds);
+
+    /** Redirige les chansons d'un album dupliqué vers l'album canonique. */
+    @Query("UPDATE songs SET albumId = :newAlbumId WHERE albumId = :oldAlbumId")
+    void updateAlbumId(long oldAlbumId, long newAlbumId);
 }

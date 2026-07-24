@@ -40,5 +40,9 @@ public class Album {
     /** Vrai si l'utilisateur a manuellement défini l'année via l'écran d'édition. */
     @ColumnInfo(defaultValue = "0")
     public boolean userEditedReleaseDate = false;
+
+    /** Vrai si l'utilisateur a manuellement défini l'artiste via l'écran d'édition. */
+    @ColumnInfo(defaultValue = "0")
+    public boolean userEditedArtist = false;
 }
 

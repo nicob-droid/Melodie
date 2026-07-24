@@ -56,7 +56,8 @@ public interface AlbumDao {
 
     @Query("UPDATE albums SET name = :name, artist = :artist, releaseDate = :releaseDate, cover = :cover, " +
            "userEditedCover = CASE WHEN :cover IS NOT NULL THEN 1 ELSE 0 END, " +
-           "userEditedReleaseDate = CASE WHEN :releaseDate IS NOT NULL AND :releaseDate != '' THEN 1 ELSE 0 END " +
+           "userEditedReleaseDate = CASE WHEN :releaseDate IS NOT NULL AND :releaseDate != '' THEN 1 ELSE 0 END, " +
+           "userEditedArtist = CASE WHEN :artist IS NOT NULL AND :artist != '' THEN 1 ELSE 0 END " +
            "WHERE id = :albumId")
     void updateMetadata(long albumId, String name, String artist, String releaseDate, String cover);
 
