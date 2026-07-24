@@ -94,9 +94,9 @@ public class MediaStoreScanner {
                     continue;
                 }
                 // Exclut WhatsApp du scan local principal.
-                if (isWhatsAppPath(absolutePath)) {
+                /*if (isWhatsAppPath(absolutePath)) {
                     continue;
-                }
+                }*/
 
                 String albumName = c.getString(albumIdx);
                 String artistName = c.getString(artistIdx);
