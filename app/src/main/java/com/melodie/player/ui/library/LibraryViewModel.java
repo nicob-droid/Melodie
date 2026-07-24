@@ -98,12 +98,12 @@ public class LibraryViewModel extends ViewModel {
         repository.reorderPlaylist(playlistId, orderedSongIds);
     }
 
-    public void updateAlbumMetadata(long albumId, String name, String releaseDate, String cover) {
-        repository.updateAlbumMetadata(albumId, name, releaseDate, cover);
+    public void updateAlbumMetadata(long albumId, String name, String artist, String releaseDate, String cover) {
+        repository.updateAlbumMetadata(albumId, name, artist, releaseDate, cover);
     }
 
-    public void updateAlbumMetadataWithCallback(long albumId, String name, String releaseDate, String cover, Runnable onDone) {
-        repository.updateAlbumMetadataWithCallback(albumId, name, releaseDate, cover, onDone);
+    public void updateAlbumMetadataWithCallback(long albumId, String name, String artist, String releaseDate, String cover, Runnable onDone) {
+        repository.updateAlbumMetadataWithCallback(albumId, name, artist, releaseDate, cover, onDone);
     }
 
     public void searchAlbumCoverCandidates(String artist, String album, int limit,

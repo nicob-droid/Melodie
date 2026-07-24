@@ -54,11 +54,11 @@ public interface AlbumDao {
     @Query("UPDATE albums SET releaseDate = :releaseDate WHERE id = :albumId")
     void updateReleaseDate(long albumId, String releaseDate);
 
-    @Query("UPDATE albums SET name = :name, releaseDate = :releaseDate, cover = :cover, " +
+    @Query("UPDATE albums SET name = :name, artist = :artist, releaseDate = :releaseDate, cover = :cover, " +
            "userEditedCover = CASE WHEN :cover IS NOT NULL THEN 1 ELSE 0 END, " +
            "userEditedReleaseDate = CASE WHEN :releaseDate IS NOT NULL AND :releaseDate != '' THEN 1 ELSE 0 END " +
            "WHERE id = :albumId")
-    void updateMetadata(long albumId, String name, String releaseDate, String cover);
+    void updateMetadata(long albumId, String name, String artist, String releaseDate, String cover);
 
     @Query("DELETE FROM albums WHERE id IN (:albumIds)")
     void deleteByIds(List<Long> albumIds);

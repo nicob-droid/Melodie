@@ -282,32 +282,36 @@ public class MusicRepository {
         executor.execute(() -> playlistDao.replaceOrder(playlistId, orderedSongIds));
     }
 
-    public void updateAlbumMetadata(long albumId, String name, String releaseDate, String cover) {
+    public void updateAlbumMetadata(long albumId, String name, String artist, String releaseDate, String cover) {
         if (albumId <= 0) return;
         final String normalizedName = name != null ? name.trim() : "";
         if (normalizedName.isEmpty()) return;
+        final String normalizedArtist = artist != null ? artist.trim() : "";
         final String normalizedReleaseDate = releaseDate != null ? releaseDate.trim() : "";
         final String normalizedCover = cover != null ? cover.trim() : "";
         executor.execute(() -> {
             albumDao.updateMetadata(
                     albumId,
                     normalizedName,
+                    normalizedArtist.isEmpty() ? null : normalizedArtist,
                     normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                     normalizedCover.isEmpty() ? null : normalizedCover
             );
             songDao.updateAlbumMetadataByAlbumId(
                     albumId,
                     normalizedName,
+                    normalizedArtist.isEmpty() ? null : normalizedArtist,
                     normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                     normalizedCover.isEmpty() ? null : normalizedCover
             );
         });
     }
 
-    public void updateAlbumMetadataWithCallback(long albumId, String name, String releaseDate, String cover, Runnable onDone) {
+    public void updateAlbumMetadataWithCallback(long albumId, String name, String artist, String releaseDate, String cover, Runnable onDone) {
         if (albumId <= 0) return;
         final String normalizedName = name != null ? name.trim() : "";
         if (normalizedName.isEmpty()) return;
+        final String normalizedArtist = artist != null ? artist.trim() : "";
         final String normalizedReleaseDate = releaseDate != null ? releaseDate.trim() : "";
         final String normalizedCover = cover != null ? cover.trim() : "";
         executor.execute(() -> {
@@ -315,12 +319,14 @@ public class MusicRepository {
                 albumDao.updateMetadata(
                         albumId,
                         normalizedName,
+                        normalizedArtist.isEmpty() ? null : normalizedArtist,
                         normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                         normalizedCover.isEmpty() ? null : normalizedCover
                 );
                 songDao.updateAlbumMetadataByAlbumId(
                         albumId,
                         normalizedName,
+                        normalizedArtist.isEmpty() ? null : normalizedArtist,
                         normalizedReleaseDate.isEmpty() ? null : normalizedReleaseDate,
                         normalizedCover.isEmpty() ? null : normalizedCover
                 );
@@ -350,9 +356,10 @@ public class MusicRepository {
             source.treeUri = treeUri != null ? treeUri : "";
             source.enabled = true;
             source.createdAt = System.currentTimeMillis();
-            folderSourceDao.insert(source);
+            long sourceId = folderSourceDao.insert(source);
             // Rescan immédiatement pour que les fichiers du nouveau dossier apparaissent aussitôt.
             performFullScan();
+            triggerCoverLookupForSource(sourceId);
         });
     }
 
@@ -777,6 +784,30 @@ public class MusicRepository {
                 android.util.Log.w("MusicRepository", "Unable to clear cover sentinels on startup", e);
             }
         });
+    }
+
+    private void triggerCoverLookupForSource(long folderSourceId) {
+        if (folderSourceId <= 0L || !isOnlineCoverEnabled()) return;
+
+        Set<Long> albumIds = new HashSet<>();
+        for (Song song : songDao.getBySourceSync(Song.SOURCE_LOCAL)) {
+            if (song == null) continue;
+            if (song.folderSourceId == folderSourceId && song.albumId > 0L) {
+                albumIds.add(song.albumId);
+            }
+        }
+
+        for (Long albumId : albumIds) {
+            if (albumId == null || albumId <= 0L) continue;
+            Album album = albumDao.getByIdSync(albumId);
+            if (album == null) continue;
+
+            boolean missingCover = album.cover == null || album.cover.trim().isEmpty();
+            boolean missingReleaseDate = album.releaseDate == null || album.releaseDate.trim().isEmpty();
+            if ((missingCover || missingReleaseDate) && !isUnknownArtistValue(album.artist)) {
+                resolveAlbumCover(album, false, null);
+            }
+        }
     }
 
      /**

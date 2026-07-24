@@ -48,6 +48,8 @@
     <string name="album_edit_clear_cover">Supprimer la pochette</string>
     <string name="album_edit_name">Titre de l\'album</string>
     <string name="album_edit_name_hint">Ex. Random Access Memories</string>
+    <string name="album_edit_artist">Artiste de l\'album</string>
+    <string name="album_edit_artist_hint">Ex. Daft Punk</string>
     <string name="album_edit_release_date">Année de l\'album</string>
     <string name="album_edit_release_date_hint">Ex. 2013</string>
     <string name="album_edit_release_date_invalid">Veuillez entrer une année valide (4 chiffres).</string>

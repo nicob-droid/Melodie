@@ -17,16 +17,13 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.melodie.player.R;
 import com.melodie.player.ui.adapter.LibraryAlbumListAdapter;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import dagger.hilt.android.AndroidEntryPoint;
 
 @AndroidEntryPoint
 public class AlbumsFragment extends Fragment {
 
-    private final Set<Long> prefetchedAlbumIds = new HashSet<>();
     private TextView emptyStateView;
     private int lastAlbumCount;
     private boolean hasActiveSources = true;
@@ -75,8 +72,6 @@ public class AlbumsFragment extends Fragment {
             });
             lastAlbumCount = albums != null ? albums.size() : 0;
             updateEmptyState();
-            // Prefetch covers only for albums we haven't prefetched yet.
-            prefetchNewCovers(vm, albums);
         });
 
         vm.folderSources().observe(getViewLifecycleOwner(), sources -> {
@@ -105,20 +100,6 @@ public class AlbumsFragment extends Fragment {
                 : R.string.albums_empty_no_active_source);
     }
 
-    private void prefetchNewCovers(LibraryViewModel vm, List<com.melodie.player.data.entity.Album> albums) {
-        if (albums == null) return;
-        for (com.melodie.player.data.entity.Album album : albums) {
-            if (album == null) continue;
-            boolean missingCover = album.cover == null || album.cover.trim().isEmpty();
-            boolean missingReleaseDate = album.releaseDate == null || album.releaseDate.trim().isEmpty();
-            if ((missingCover || missingReleaseDate) && !prefetchedAlbumIds.contains(album.id)) {
-                vm.resolveAlbumCover(album, false);
-            }
-            if (!missingCover && !missingReleaseDate) {
-                prefetchedAlbumIds.add(album.id);
-            }
-        }
-    }
 
     @Override
     public void onDestroyView() {

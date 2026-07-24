@@ -48,6 +48,8 @@
     <string name="album_edit_clear_cover">Remove cover</string>
     <string name="album_edit_name">Album title</string>
     <string name="album_edit_name_hint">e.g. Random Access Memories</string>
+    <string name="album_edit_artist">Album artist</string>
+    <string name="album_edit_artist_hint">e.g. Daft Punk</string>
     <string name="album_edit_release_date">Album year</string>
     <string name="album_edit_release_date_hint">e.g. 2013</string>
     <string name="album_edit_release_date_invalid">Please enter a valid year (4 digits).</string>

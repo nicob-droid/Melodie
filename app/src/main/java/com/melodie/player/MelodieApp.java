@@ -40,8 +40,6 @@ public class MelodieApp extends Application implements Configuration.Provider {
                 .build();
         MobileAds.setRequestConfiguration(configuration);
         MobileAds.initialize(this);
-        // Re-tente UNE fois les pochettes précédemment marquées "introuvables".
-        musicRepository.retryMissingCoversOnStartup();
     }
 
     @Override

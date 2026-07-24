@@ -123,8 +123,6 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
                 })
                 .into(holder.cover);
 
-        bindSourceBadge(holder.sourceBadge, album.sourceType);
-
         holder.itemView.setOnClickListener(v -> {
             if (clickListener != null) {
                 clickListener.onClick(album);
@@ -156,33 +154,8 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         return trimmed.startsWith("content://");
     }
 
-    private void bindSourceBadge(ImageView badge, int sourceType) {
-        if (badge == null) return;
-        switch (sourceType) {
-            case Album.SOURCE_LOCAL:
-                badge.setImageResource(R.drawable.ic_folder);
-                badge.setContentDescription(badge.getContext().getString(R.string.album_source_badge_local));
-                badge.setVisibility(View.VISIBLE);
-                break;
-            case Album.SOURCE_DRIVE:
-                badge.setImageResource(R.drawable.ic_cloud);
-                badge.setContentDescription(badge.getContext().getString(R.string.album_source_badge_drive));
-                badge.setVisibility(View.VISIBLE);
-                break;
-            case Album.SOURCE_MIXED:
-                badge.setImageResource(R.drawable.ic_library);
-                badge.setContentDescription(badge.getContext().getString(R.string.album_source_badge_mixed));
-                badge.setVisibility(View.VISIBLE);
-                break;
-            default:
-                badge.setVisibility(View.GONE);
-                break;
-        }
-    }
-
     static class VH extends RecyclerView.ViewHolder {
         final ImageView cover;
-        final ImageView sourceBadge;
         final TextView artist;
         final TextView album;
         final TextView releaseDate;
@@ -190,7 +163,6 @@ public class LibraryAlbumListAdapter extends ListAdapter<Album, LibraryAlbumList
         VH(@NonNull View itemView) {
             super(itemView);
             cover = itemView.findViewById(R.id.cover);
-            sourceBadge = itemView.findViewById(R.id.source_badge);
             artist = itemView.findViewById(R.id.artist);
             album = itemView.findViewById(R.id.album);
             releaseDate = itemView.findViewById(R.id.release_date);

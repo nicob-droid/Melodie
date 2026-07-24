@@ -46,6 +46,7 @@ public class AlbumEditFragment extends Fragment {
     private LibraryViewModel viewModel;
     private ImageView coverPreview;
     private EditText nameInput;
+    private EditText artistInput;
     private EditText releaseDateInput;
     private TextView coverValue;
     private String selectedCover;
@@ -97,6 +98,7 @@ public class AlbumEditFragment extends Fragment {
         TextView title = view.findViewById(R.id.title);
         coverPreview = view.findViewById(R.id.album_cover_preview);
         nameInput = view.findViewById(R.id.input_album_name);
+        artistInput = view.findViewById(R.id.input_album_artist);
         releaseDateInput = view.findViewById(R.id.input_album_release_date);
         coverValue = view.findViewById(R.id.album_cover_value);
         chooseCoverButton = view.findViewById(R.id.btn_pick_cover);
@@ -117,6 +119,11 @@ public class AlbumEditFragment extends Fragment {
                 String currentName = album.name != null ? album.name : "";
                 nameInput.setText(currentName);
                 nameInput.setSelection(currentName.length());
+            }
+            if (artistInput != null && !artistInput.hasFocus()) {
+                String currentArtistText = album.artist != null ? album.artist : "";
+                artistInput.setText(currentArtistText);
+                artistInput.setSelection(currentArtistText.length());
             }
             if (!releaseDateInput.hasFocus()) {
                 releaseDateInput.setText(album.releaseDate != null ? album.releaseDate : "");
@@ -139,12 +146,15 @@ public class AlbumEditFragment extends Fragment {
                 Toast.makeText(requireContext(), R.string.album_edit_name_required, Toast.LENGTH_SHORT).show();
                 return;
             }
+            String newArtist = artistInput != null && artistInput.getText() != null
+                    ? artistInput.getText().toString().trim()
+                    : "";
             String newDate = releaseDateInput.getText() != null ? releaseDateInput.getText().toString().trim() : "";
             if (!newDate.isEmpty() && !isValidYear(newDate)) {
                 Toast.makeText(requireContext(), R.string.album_edit_release_date_invalid, Toast.LENGTH_SHORT).show();
                 return;
             }
-            handleSaveWithCoverDownload(albumId, newName, newDate, selectedCover);
+            handleSaveWithCoverDownload(albumId, newName, newArtist, newDate, selectedCover);
         });
     }
 
@@ -153,6 +163,7 @@ public class AlbumEditFragment extends Fragment {
         super.onDestroyView();
         coverPreview = null;
         nameInput = null;
+        artistInput = null;
         releaseDateInput = null;
         coverValue = null;
         chooseCoverButton = null;
@@ -219,7 +230,7 @@ public class AlbumEditFragment extends Fragment {
         if (!isAdded() || onlineCoverSearchInFlight) return;
 
         String albumQuery = resolveAlbumSearchQuery();
-        String artistQuery = currentArtist != null ? currentArtist.trim() : "";
+        String artistQuery = resolveArtistSearchQuery();
         if (albumQuery.isEmpty() && artistQuery.isEmpty()) {
             Toast.makeText(requireContext(), R.string.album_edit_online_cover_missing_query, Toast.LENGTH_SHORT).show();
             return;
@@ -258,6 +269,16 @@ public class AlbumEditFragment extends Fragment {
         }
         String fromArgs = requireArguments().getString(ARG_ALBUM_NAME, "");
         return fromArgs != null ? fromArgs.trim() : "";
+    }
+
+    private String resolveArtistSearchQuery() {
+        String fromInput = artistInput != null && artistInput.getText() != null
+                ? artistInput.getText().toString().trim()
+                : "";
+        if (!fromInput.isEmpty()) {
+            return fromInput;
+        }
+        return currentArtist != null ? currentArtist.trim() : "";
     }
 
     private void showOnlineCoverResultsDialog(List<CoverArtFetcher.CoverCandidate> candidates,
@@ -307,7 +328,7 @@ public class AlbumEditFragment extends Fragment {
         }
     }
 
-    private void handleSaveWithCoverDownload(long albumId, String newName, String newDate, String coverUrl) {
+    private void handleSaveWithCoverDownload(long albumId, String newName, String newArtist, String newDate, String coverUrl) {
         // Vérifier si la pochette est une URL en ligne et doit être téléchargée
         if (coverUrl != null && !coverUrl.trim().isEmpty() && coverUrl.startsWith("http")) {
             if (savingCover) return; // Éviter les doubles clics
@@ -334,7 +355,7 @@ public class AlbumEditFragment extends Fragment {
                         }
 
                         String finalCoverPath = "file://" + localFilePath;
-                        savingCoverThenNavigate(albumId, newName, newDate, finalCoverPath);
+                        savingCoverThenNavigate(albumId, newName, newArtist, newDate, finalCoverPath);
                     });
                 }
 
@@ -360,12 +381,12 @@ public class AlbumEditFragment extends Fragment {
             });
         } else {
             // Pas de pochette en ligne, sauvegarder directement
-            savingCoverThenNavigate(albumId, newName, newDate, coverUrl);
+            savingCoverThenNavigate(albumId, newName, newArtist, newDate, coverUrl);
         }
     }
 
-    private void savingCoverThenNavigate(long albumId, String newName, String newDate, String coverUrl) {
-        viewModel.updateAlbumMetadataWithCallback(albumId, newName, newDate, coverUrl, () -> {
+    private void savingCoverThenNavigate(long albumId, String newName, String newArtist, String newDate, String coverUrl) {
+        viewModel.updateAlbumMetadataWithCallback(albumId, newName, newArtist, newDate, coverUrl, () -> {
             if (getActivity() == null || !isAdded()) {
                 savingCover = false;
                 return;
